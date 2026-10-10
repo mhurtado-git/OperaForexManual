@@ -1,0 +1,6 @@
+# Normaliza finales de línea (Windows usa CRLF, Git guarda LF).
+* text=auto
+
+# Los scripts de shell y los hooks deben terminar en LF o fallan en Git Bash.
+.githooks/* text eol=lf
+*.sh text eol=lf

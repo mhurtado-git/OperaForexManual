@@ -1,0 +1,13 @@
+# Perfil REAL. Las credenciales van en .env.real (no aquí).
+# Los valores de riesgo son un ejemplo: defínelos tú antes de usar dinero real.
+mode: real
+
+symbols: [EURUSD]   # usa el nombre exacto que muestra tu broker (p. ej. EURUSD.m)
+timeframe: H1       # M1, M5, M15, M30, H1, H4, D1
+bars: 200           # velas cerradas que se leen en cada ciclo
+
+risk:
+  risk_per_trade: 0.0025  # fracción del saldo que se acepta perder por operación (0.0025 = 0,25 %)
+  max_daily_loss: 0.01    # pérdida diaria máxima como fracción del saldo
+  min_reward_risk: 2.0    # relación mínima beneficio/riesgo (TP frente a SL)
+  max_spread_pips: 1.5    # si el spread es mayor, no se emite la alerta

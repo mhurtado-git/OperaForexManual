@@ -1,0 +1,22 @@
+#!/bin/sh
+# Bloquea commits que incluyan credenciales de MetaTrader 5.
+# Se activa con: git config core.hooksPath .githooks
+
+# 1) Archivos de credenciales reales.
+blocked=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)\.env\.(demo|real)$')
+if [ -n "$blocked" ]; then
+    echo "ERROR: no se pueden versionar archivos de credenciales:"
+    echo "$blocked"
+    echo "Quítalos del commit con: git reset HEAD <archivo>"
+    exit 1
+fi
+
+# 2) Contraseñas con valor real en cualquier otro archivo (los ejemplos usan 'cambia-esto').
+if git diff --cached -U0 -- . ':(exclude)tests' ':(exclude).githooks' \
+    | grep -E '^\+.*MT5_PASSWORD=' | grep -v 'cambia-esto' > /dev/null; then
+    echo "ERROR: los cambios incluyen una contraseña de MT5 con un valor real."
+    echo "Si una contraseña ya llegó a un commit, cámbiala en el broker: borrar el commit no basta."
+    exit 1
+fi
+
+exit 0
