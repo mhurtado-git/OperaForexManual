@@ -1,14 +1,16 @@
 # Plataforma de operación manual en Forex (MT5 + Claude)
 
 Fase 1: conexión con MetaTrader 5, perfiles **demo** y **real**, y salvaguardas.
-Todavía no genera alertas ni envía órdenes. Esas piezas llegan en las fases siguientes.
+Fase 2: estrategias parametrizables, alertas de largo/corto con stop loss, take profit y lote, y backtest.
+No envía órdenes: **tú decides y ejecutas en MetaTrader 5**. El envío con confirmación llega en la fase 3.
 
 > Proyecto técnico, no es asesoría financiera. Operar en Forex implica riesgo de perder el capital.
 
 ## Requisitos (Windows)
 
 - Windows 10 u 11 (o un VPS con Windows). El paquete `MetaTrader5` de Python solo funciona en Windows.
-- Python 3.11 o 3.12 desde python.org (marca "Add python.exe to PATH" al instalar).
+- Python 3.11 o superior desde python.org. En Windows se usa el lanzador `py` (el comando `python`
+  suele ser un acceso directo de la Microsoft Store que no hace nada).
 - Git y VS Code (recomendados).
 - MetaTrader 5 instalado desde tu broker, con una **cuenta demo** creada.
 
@@ -17,8 +19,8 @@ Todavía no genera alertas ni envía órdenes. Esas piezas llegan en las fases s
 En PowerShell, dentro de la carpeta del proyecto:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
 
 copy .env.demo.example .env.demo
@@ -29,7 +31,7 @@ Completa en `.env.demo` el login, la contraseña y el servidor de tu cuenta **de
 *Archivo → Abrir una cuenta* o en el correo de tu broker). Deja MetaTrader 5 abierto y luego:
 
 ```powershell
-python -m forexplat check --profile demo
+py -m forexplat check --profile demo
 ```
 
 Si todo va bien verás la cuenta (marcada como demo), el spread del símbolo y las últimas velas cerradas.
@@ -40,13 +42,67 @@ Pruebas del proyecto (no necesitan MT5):
 pytest
 ```
 
+## Señales, riesgo y backtest (fase 2)
+
+```powershell
+py -m forexplat signals  --profile demo                       # alerta sobre la última vela cerrada
+py -m forexplat backtest --profile demo                       # prueba la estrategia con 5000 velas de MT5
+py -m forexplat backtest --profile demo --strategy fib_pullback --bars 20000
+py -m forexplat backtest --profile demo --csv velas.csv       # sin MT5, con velas de un CSV
+```
+
+`signals` imprime, si hay señal, la dirección (largo o corto), la entrada, el stop loss, el take profit, la
+relación beneficio/riesgo, el **lote sugerido** y los motivos. Si no hay señal, muestra el estado de cada regla.
+Una señal que incumple el spread máximo, la relación beneficio/riesgo mínima, la distancia mínima del broker o el
+margen libre se descarta y se explica por qué. Ejecútalo cuando cierre una vela (en H1, al inicio de cada hora).
+
+### Todo es parametrizable: `config/strategies.yaml`
+
+Cada estrategia combina **un disparador** (un evento: cruce, ruptura, giro del RSI) con **reglas de confirmación**
+(por defecto, todas deben cumplirse; `min_confirmations` lo relaja) y define cómo se calculan el stop loss y el
+take profit. Las tres estrategias incluidas usan tres indicadores cada una:
+
+| Estrategia | Indicadores | Stop loss | Take profit |
+| --- | --- | --- | --- |
+| `ema_rsi_atr` (inicial) | cruce EMA 20/50, RSI 14, filtro ATR | 1,5 x ATR(14) | 1:2 |
+| `fib_pullback` | tendencia EMA 50/200, retroceso Fibonacci, giro del RSI | swing de 20 velas + 0,5 ATR | 1:2 |
+| `bb_breakout_macd` | ruptura Bollinger, histograma MACD, estocástico | 2 x ATR(14) | 1:2 |
+
+Reglas disponibles (parámetros y valores por defecto, en el encabezado del propio archivo): `ma_cross`, `rsi`,
+`macd`, `bollinger`, `stochastic`, `fibonacci` y `atr_filter`. Stop loss: `atr`, `fixed_pips` o `swing`, con
+límites `min_pips`/`max_pips`. Take profit: `rr`, `fixed_pips` o `atr`. Una clave mal escrita o un valor fuera de
+rango detiene el programa con un mensaje claro, en vez de ignorarse.
+
+Los perfiles eligen qué estrategias usan (`strategies:`) y su riesgo (`risk:`): en demo, 1 % por operación;
+el lote se calcula con el valor del tick del símbolo y siempre se redondea **hacia abajo**. Si ni el lote mínimo cabe
+en el riesgo permitido, la señal se descarta.
+
+### Cómo se simula el backtest (conservador)
+
+- La señal nace al cierre de una vela y la entrada es en la **apertura de la siguiente**.
+- Las velas de MT5 son de precio bid: las compras entran en el ask (apertura + spread) y los stops de las ventas
+  se tocan en el ask.
+- Si una vela toca a la vez el stop loss y el take profit, se asume que tocó **primero el stop loss**.
+- Los huecos de precio se respetan (la salida puede ser peor que -1 R). Una operación abierta a la vez.
+- Los resultados se miden en R (1 R = distancia al stop loss): tasa de aciertos, expectativa, factor de
+  beneficio, drawdown y mayor racha perdedora. Se guardan en `reports/` (no se versiona).
+
+Un buen backtest no garantiza resultados futuros, y ajustar parámetros hasta que el histórico se vea bien suele
+fallar en vivo. Con menos de 30 operaciones el resultado no es fiable. Valida siempre en demo.
+
+### Limitaciones conocidas
+
+- `max_daily_loss` está en la configuración pero **todavía no se aplica**: llega con las órdenes (fase 3).
+- Las llamadas nuevas a MT5 (precio actual y margen requerido) se probaron solo con un cliente simulado;
+  confírmalas en tu cuenta demo con `signals`.
+
 ## Perfiles demo y real
 
 | | Demo | Real |
 | --- | --- | --- |
 | Parámetros | `config/demo.yaml` | `config/real.yaml` |
 | Credenciales | `.env.demo` | `.env.real` |
-| Comando | `python -m forexplat check --profile demo` | `python -m forexplat check --profile real --i-understand-real-account` |
+| Comando | `py -m forexplat check --profile demo` | `py -m forexplat check --profile real --i-understand-real-account` |
 
 Salvaguardas ya incluidas:
 
@@ -61,13 +117,21 @@ Los valores de riesgo de `real.yaml` son un ejemplo: defínelos tú antes de usa
 ## Estructura
 
 ```
-config/            demo.yaml, real.yaml (parámetros de cada perfil)
+config/            demo.yaml, real.yaml (perfiles) y strategies.yaml (estrategias)
 src/forexplat/
   config.py        carga y validación de perfiles
   safety.py        comprobación de tipo de cuenta
-  mt5_client.py    conector con MT5 (cuenta, símbolos, velas)
-  cli.py           comando `check`
-tests/             pruebas de configuración y salvaguardas
+  mt5_client.py    conector con MT5 (cuenta, símbolos, velas, precio, margen)
+  indicators.py    SMA, EMA, RSI, ATR, MACD, Bollinger, estocástico, Fibonacci
+  rules.py         reglas combinables (cruce, RSI, MACD, ...)
+  strategy.py      disparador + confirmaciones desde strategies.yaml
+  risk.py          stop loss, take profit y tamaño del lote
+  backtest.py      simulador y métricas
+  scanner.py       evalúa la última vela y arma el plan de operación
+  alerts.py        texto de las alertas y del informe
+  data.py          velas en CSV
+  cli.py           comandos `check`, `signals` y `backtest`
+tests/             pruebas (no necesitan MT5)
 ```
 
 ## Trabajo con Git
@@ -100,8 +164,8 @@ Si clonas el repositorio en otra máquina, activa el hook una vez: `git config c
 
 ## Fases siguientes
 
-1. **Conexión y datos (demo):** esta entrega.
-2. **Señales y riesgo:** motor de señales y gestor de riesgo (SL, TP y lote), con backtest.
+1. **Conexión y datos (demo):** hecha.
+2. **Señales y riesgo:** motor de señales y gestor de riesgo (SL, TP y lote), con backtest: esta entrega.
 3. **Alertas:** Telegram con botones para confirmar o descartar; envío de la orden con SL y TP tras la confirmación.
 4. **Capa Claude:** validación y explicación de cada setup con salida JSON.
 5. **Prueba en demo** durante al menos un mes.

@@ -1,0 +1,69 @@
+# Estrategias y sus parámetros. Todo se puede cambiar aquí, sin tocar el código.
+# Una clave mal escrita o un valor fuera de rango detiene el programa con un mensaje claro.
+#
+# Cada estrategia tiene:
+#   trigger:            nombre de la regla que DISPARA la señal. Debe ser un evento (un cruce,
+#                       una salida de sobreventa, una ruptura), no un estado.
+#   rules:              lista de reglas (indicadores). Las que no disparan, confirman.
+#   min_confirmations:  cuántas reglas de confirmación deben coincidir (por defecto, todas).
+#   stop_loss, take_profit: cómo se calculan (ver más abajo).
+#
+# Tipos de regla y parámetros (entre paréntesis, el valor por defecto):
+#   ma_cross    fast (20), slow (50), ma_type (ema | sma), mode (event = cruce | state = tendencia)
+#   rsi         period (14), mode (momentum = estado | reversal = evento),
+#               oversold (30), mid (50), overbought (70)
+#   macd        fast (12), slow (26), signal (9), mode (cross = evento | histogram = estado)
+#   bollinger   period (20), deviation (2.0), mode (reversion | breakout), ambos eventos
+#   stochastic  k_period (14), smooth_k (3), d_period (3), oversold (20), overbought (80),
+#               mode (cross = evento | state = estado)
+#   fibonacci   lookback (100), zone_start (0.382), zone_end (0.618), min_range_atr (2.0),
+#               atr_period (14). Estado: precio dentro de la zona de retroceso del último impulso.
+#   atr_filter  period (14), min_pips (0), max_pips (sin límite). Estado: filtro de volatilidad.
+#   Todas aceptan además `name:` para distinguir dos reglas del mismo tipo (por ejemplo, dos medias).
+#
+# stop_loss:   mode atr (atr_period, atr_multiplier)
+#                   | fixed_pips (pips)
+#                   | swing (swing_lookback, swing_buffer_atr)
+#              y los límites min_pips / max_pips: fuera de ellos la señal se descarta.
+# take_profit: mode rr (reward_risk) | fixed_pips (pips) | atr (atr_period, atr_multiplier)
+#
+# Los perfiles (demo.yaml y real.yaml) eligen cuáles se usan con la lista `strategies:`.
+
+strategies:
+
+  # 1) Estrategia inicial: cruce de medias con confirmación de momentum y filtro de volatilidad.
+  #    Compra: EMA 20 cruza sobre EMA 50, RSI entre 50 y 70 y volatilidad suficiente.
+  ema_rsi_atr:
+    description: Cruce de EMA 20/50 con confirmación de RSI y filtro de volatilidad ATR
+    trigger: ema_cross
+    rules:
+      - {type: ma_cross, name: ema_cross, fast: 20, slow: 50, ma_type: ema, mode: event}
+      - {type: rsi, name: rsi, period: 14, mode: momentum, oversold: 30, mid: 50, overbought: 70}
+      - {type: atr_filter, name: atr, period: 14, min_pips: 5}
+    stop_loss: {mode: atr, atr_period: 14, atr_multiplier: 1.5, min_pips: 5}
+    take_profit: {mode: rr, reward_risk: 2.0}
+
+  # 2) Retroceso en tendencia: entra cuando el precio retrocede a la zona Fibonacci de un impulso
+  #    a favor de la tendencia y el RSI da la vuelta.
+  fib_pullback:
+    description: Retroceso Fibonacci en tendencia (EMA 50/200) con giro del RSI
+    trigger: rsi
+    rules:
+      - {type: ma_cross, name: trend, fast: 50, slow: 200, ma_type: ema, mode: state}
+      - {type: fibonacci, name: fib, lookback: 100, zone_start: 0.382, zone_end: 0.618, min_range_atr: 2.0}
+      - {type: rsi, name: rsi, period: 14, mode: reversal, oversold: 40, mid: 50, overbought: 60}
+    stop_loss: {mode: swing, swing_lookback: 20, swing_buffer_atr: 0.5, atr_period: 14, min_pips: 5}
+    take_profit: {mode: rr, reward_risk: 2.0}
+
+  # 3) Ruptura con momentum: ruptura de las bandas de Bollinger confirmada por el histograma
+  #    del MACD y por el estocástico.
+  bb_breakout_macd:
+    description: Ruptura de Bollinger con histograma MACD y estocástico a favor
+    trigger: bollinger
+    rules:
+      - {type: bollinger, name: bollinger, period: 20, deviation: 2.0, mode: breakout}
+      - {type: macd, name: macd, fast: 12, slow: 26, signal: 9, mode: histogram}
+      - {type: stochastic, name: stoch, k_period: 14, smooth_k: 3, d_period: 3, oversold: 20, overbought: 80, mode: state}
+    stop_loss: {mode: atr, atr_period: 14, atr_multiplier: 2.0, min_pips: 5}
+    # El perfil exige risk.min_reward_risk (2.0 por defecto): un TP menor descarta todas las señales.
+    take_profit: {mode: rr, reward_risk: 2.0}

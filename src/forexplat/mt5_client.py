@@ -45,6 +45,8 @@ class Mt5Client:
 
     def connect(self) -> None:
         creds = self._profile.mt5
+        if creds is None:
+            raise Mt5Error("El perfil se cargó sin credenciales; no se puede conectar con MT5.")
         kwargs = {
             "login": creds.login,
             "password": creds.password.get_secret_value(),
@@ -87,6 +89,7 @@ class Mt5Client:
             "currency": info.currency,
             "balance": info.balance,
             "equity": info.equity,
+            "margin_free": info.margin_free,
             "leverage": info.leverage,
         }
 
@@ -107,7 +110,23 @@ class Mt5Client:
             "volume_min": info.volume_min,
             "volume_step": info.volume_step,
             "volume_max": info.volume_max,
+            "stops_level": info.trade_stops_level,
         }
+
+    def get_tick(self, symbol: str) -> dict:
+        """Último precio de compra (ask) y de venta (bid) del símbolo."""
+        self._require_account()
+        self._select_symbol(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            raise Mt5Error(f"Sin precio actual para {symbol}: {mt5.last_error()}")
+        return {"bid": tick.bid, "ask": tick.ask}
+
+    def margin_required(self, symbol: str, direction: str, lots: float, price: float) -> float | None:
+        """Margen que exigiría abrir la operación; None si MT5 no pudo calcularlo."""
+        self._require_account()
+        action = mt5.ORDER_TYPE_BUY if direction == "long" else mt5.ORDER_TYPE_SELL
+        return mt5.order_calc_margin(action, symbol, lots, price)
 
     def get_candles(
         self, symbol: str, timeframe: str, bars: int, closed_only: bool = True

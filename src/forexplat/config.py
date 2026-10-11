@@ -38,6 +38,14 @@ class RiskConfig(BaseModel):
     )
 
 
+class BacktestConfig(BaseModel):
+    bars: int = Field(
+        default=5000, ge=200, le=100000, description="Velas históricas que se descargan de MT5"
+    )
+    spread_pips: float = Field(default=1.0, ge=0, description="Spread simulado en cada entrada")
+    initial_balance: float = Field(default=10000.0, gt=0, description="Saldo inicial simulado")
+
+
 class Mt5Credentials(BaseModel):
     login: int
     password: SecretStr
@@ -50,8 +58,11 @@ class Profile(BaseModel):
     symbols: list[str] = Field(min_length=1)
     timeframe: str = "H1"
     bars: int = Field(default=200, ge=50, le=5000)
+    strategies: list[str] = Field(default_factory=lambda: ["ema_rsi_atr"], min_length=1)
     risk: RiskConfig
-    mt5: Mt5Credentials
+    backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+    # None cuando el perfil se carga sin credenciales (por ejemplo, backtest con un archivo CSV).
+    mt5: Mt5Credentials | None = None
 
     @field_validator("symbols")
     @classmethod
@@ -71,8 +82,12 @@ class Profile(BaseModel):
         return value
 
 
-def load_profile(name: str, root: Path = ROOT) -> Profile:
-    """Carga el perfil `name` ("demo" o "real") desde `root`."""
+def load_profile(name: str, root: Path = ROOT, require_credentials: bool = True) -> Profile:
+    """Carga el perfil `name` ("demo" o "real") desde `root`.
+
+    Con `require_credentials=False` no se lee el archivo .env (útil para probar una estrategia
+    con un CSV sin conectar con MetaTrader 5).
+    """
     try:
         expected_mode = Mode(name)
     except ValueError:
@@ -83,19 +98,20 @@ def load_profile(name: str, root: Path = ROOT) -> Profile:
 
     if not yaml_path.exists():
         raise FileNotFoundError(f"No existe {yaml_path}")
-    if not env_path.exists():
+    if require_credentials and not env_path.exists():
         raise FileNotFoundError(
             f"Falta {env_path.name}. Copia {env_path.name}.example, renómbralo y completa tus datos."
         )
 
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    env = dotenv_values(env_path)
-    data["mt5"] = {
-        "login": env.get("MT5_LOGIN"),
-        "password": env.get("MT5_PASSWORD"),
-        "server": env.get("MT5_SERVER"),
-        "path": env.get("MT5_PATH") or None,
-    }
+    if require_credentials:
+        env = dotenv_values(env_path)
+        data["mt5"] = {
+            "login": env.get("MT5_LOGIN"),
+            "password": env.get("MT5_PASSWORD"),
+            "server": env.get("MT5_SERVER"),
+            "path": env.get("MT5_PATH") or None,
+        }
 
     profile = Profile.model_validate(data)
     if profile.mode is not expected_mode:
