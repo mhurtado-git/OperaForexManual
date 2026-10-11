@@ -203,3 +203,35 @@ def summarize(trades: pd.DataFrame, risk_per_trade: float, initial_balance: floa
         avg_bars=float(trades["bars"].mean()),
     )
     return metrics
+
+
+def equity_curve(trades: pd.DataFrame, risk_per_trade: float, initial_balance: float) -> pd.DataFrame:
+    """Saldo simulado tras cada operación (misma regla que `summarize`): columnas time y balance."""
+    if trades.empty:
+        return pd.DataFrame({"time": [], "balance": []})
+    balance = initial_balance
+    times = [pd.Timestamp(trades["entry_time"].iloc[0])]
+    values = [balance]
+    for exit_time, r in zip(trades["exit_time"], trades["r"].to_numpy(dtype=float)):
+        balance = max(balance * (1.0 + risk_per_trade * r), 0.0)
+        times.append(pd.Timestamp(exit_time))
+        values.append(balance)
+    return pd.DataFrame({"time": times, "balance": values})
+
+
+def split_metrics(
+    trades: pd.DataFrame, cut_time, risk_per_trade: float, initial_balance: float
+) -> tuple[dict, dict]:
+    """Métricas del periodo de ajuste (señales antes de `cut_time`) y del de validación (desde `cut_time`).
+
+    Se simula toda la historia una sola vez y se reparten las operaciones por la fecha de su señal,
+    así los indicadores del periodo de validación no arrancan "en frío".
+    """
+    signal_time = pd.to_datetime(trades["signal_time"], utc=True)
+    cut = pd.Timestamp(cut_time)
+    fit = trades[signal_time < cut]
+    valid = trades[signal_time >= cut]
+    return (
+        summarize(fit, risk_per_trade, initial_balance),
+        summarize(valid, risk_per_trade, initial_balance),
+    )

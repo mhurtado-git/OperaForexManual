@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .alerts import format_scan
 from .config import Profile
+from .safeio import atomic_write_text, file_lock
 from .scanner import scan
 from .telegram import TelegramError
 
@@ -53,12 +54,9 @@ class State:
             del self.seen[:-MAX_SEEN]
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.alerts = dict(list(self.alerts.items())[-MAX_SEEN:])
         payload = {"offset": self.offset, "seen": self.seen, "alerts": self.alerts}
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(self.path)
+        atomic_write_text(self.path, json.dumps(payload, ensure_ascii=False, indent=1))
 
 
 def _buttons(identifier: str) -> list[tuple[str, str]]:
@@ -101,12 +99,13 @@ def run_cycle(mt5, tg, profile: Profile, strategies, symbols, state: State) -> l
 
 def _append_journal(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    is_new = not path.exists()
-    with path.open("a", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=JOURNAL_COLUMNS)
-        if is_new:
-            writer.writeheader()
-        writer.writerow(row)
+    with file_lock(path):
+        is_new = not path.exists()
+        with path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=JOURNAL_COLUMNS)
+            if is_new:
+                writer.writeheader()
+            writer.writerow(row)
 
 
 def handle_updates(tg, state: State, journal: Path, timeout: int = 0) -> list[str]:
