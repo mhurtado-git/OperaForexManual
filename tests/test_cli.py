@@ -1,0 +1,134 @@
+import contextlib
+import io
+import shutil
+from pathlib import Path
+
+from fakes import FakeClient, client_class
+from forexplat import cli
+from forexplat.data import save_csv
+from helpers import random_candles
+
+REPO = Path(__file__).resolve().parents[1]
+ENV = "MT5_LOGIN=123456\nMT5_PASSWORD=secreto\nMT5_SERVER=Broker-Demo\n"
+
+
+def make_root(tmp_path, credentials=False):
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    for name in ("demo.yaml", "real.yaml", "strategies.yaml"):
+        shutil.copy(REPO / "config" / name, tmp_path / "config" / name)
+    if credentials:
+        (tmp_path / ".env.demo").write_text(ENV, encoding="utf-8")
+    return tmp_path
+
+
+def run(argv, root):
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = cli.main(argv, root=root)
+    return code, out.getvalue(), err.getvalue()
+
+
+def with_fake_client(client):
+    """Sustituye la conexión con MT5 por el cliente falso; devuelve una función para deshacerlo."""
+    original = cli._mt5_client_class
+    cli._mt5_client_class = lambda: client_class(client)
+    return lambda: setattr(cli, "_mt5_client_class", original)
+
+
+def candles_csv(tmp_path, n=1500):
+    return save_csv(random_candles(n, seed=7), tmp_path / "velas.csv")
+
+
+# --- backtest con CSV (no necesita MT5 ni credenciales) ------------------------
+
+def test_backtest_from_csv_prints_report_and_saves_trades(tmp_path):
+    root = make_root(tmp_path / "root")
+    csv = candles_csv(tmp_path)
+    out_dir = tmp_path / "informes"
+    code, out, err = run(["backtest", "--profile", "demo", "--csv", str(csv), "--out", str(out_dir)], root)
+    assert code == 0, err
+    assert "Backtest | ema_rsi_atr | EURUSD H1" in out and "1500 velas" in out
+    saved = out_dir / "backtest_ema_rsi_atr_EURUSD_H1.csv"
+    assert saved.exists() == ("Operaciones guardadas" in out)
+
+
+def test_backtest_options_override_the_profile(tmp_path):
+    root = make_root(tmp_path / "root")
+    csv = candles_csv(tmp_path)
+    code, out, err = run(
+        ["backtest", "--csv", str(csv), "--strategy", "bb_breakout_macd", "--symbol", "USDJPY",
+         "--timeframe", "m15", "--spread-pips", "0.5", "--initial-balance", "5000", "--no-report"],
+        root,
+    )
+    assert code == 0, err
+    assert "bb_breakout_macd | USDJPY M15" in out
+    assert "Spread simulado: 0.5 pips" in out and "Saldo inicial: 5000.00" in out
+    assert not (Path.cwd() / "reports" / "backtest_bb_breakout_macd_USDJPY_M15.csv").exists()
+
+
+def test_every_shipped_strategy_runs_a_backtest(tmp_path):
+    root = make_root(tmp_path / "root")
+    csv = candles_csv(tmp_path)
+    for name in ("ema_rsi_atr", "fib_pullback", "bb_breakout_macd"):
+        code, out, err = run(["backtest", "--csv", str(csv), "--strategy", name, "--no-report"], root)
+        assert code == 0 and f"Backtest | {name}" in out, (name, err)
+
+
+def test_backtest_errors_are_reported_without_traceback(tmp_path):
+    root = make_root(tmp_path / "root")
+    code, _, err = run(["backtest", "--csv", str(tmp_path / "no_existe.csv")], root)
+    assert code == 1 and err.startswith("Error:") and "No existe" in err
+
+    csv = candles_csv(tmp_path)
+    code, _, err = run(["backtest", "--csv", str(csv), "--strategy", "inventada"], root)
+    assert code == 1 and "Disponibles" in err
+
+    short = save_csv(random_candles(80, seed=1), tmp_path / "corto.csv")
+    code, _, err = run(["backtest", "--csv", str(short), "--no-report"], root)
+    assert code == 1 and "necesita más" in err
+
+
+# --- signals y check con un cliente falso -------------------------------------
+
+def test_signals_scans_every_strategy_and_symbol(tmp_path):
+    root = make_root(tmp_path, credentials=True)
+    restore = with_fake_client(FakeClient(random_candles(400, seed=3)))
+    try:
+        code, out, err = run(
+            ["signals", "--profile", "demo", "--strategy", "ema_rsi_atr", "--strategy", "fib_pullback",
+             "--symbol", "EURUSD"],
+            root,
+        )
+    finally:
+        restore()
+    assert code == 0, err
+    assert "[DEMO] EURUSD H1 | estrategia ema_rsi_atr" in out
+    assert "[DEMO] EURUSD H1 | estrategia fib_pullback" in out
+
+
+def test_signals_without_credentials_file_fails_cleanly(tmp_path):
+    root = make_root(tmp_path)
+    code, _, err = run(["signals", "--profile", "demo"], root)
+    assert code == 1 and ".env.demo" in err
+
+
+def test_check_prints_account_and_candles(tmp_path):
+    root = make_root(tmp_path, credentials=True)
+    restore = with_fake_client(FakeClient(random_candles(100, seed=3)))
+    try:
+        code, out, err = run(["check", "--profile", "demo", "--rows", "2"], root)
+    finally:
+        restore()
+    assert code == 0, err
+    assert "[DEMO] Conectado: cuenta 1 en Fake" in out and "EURUSD H1" in out
+
+
+def test_real_profile_requires_the_explicit_flag(tmp_path):
+    root = make_root(tmp_path)
+    for command in ("check", "signals"):
+        try:
+            run([command, "--profile", "real"], root)
+        except SystemExit as exit_:
+            assert "--i-understand-real-account" in str(exit_)
+        else:
+            raise AssertionError(f"{command} no exigió la bandera del perfil real")

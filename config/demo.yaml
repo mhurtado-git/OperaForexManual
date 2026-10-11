@@ -5,6 +5,13 @@ symbols: [EURUSD]   # usa el nombre exacto que muestra tu broker (p. ej. EURUSD.
 timeframe: H1       # M1, M5, M15, M30, H1, H4, D1
 bars: 200           # velas cerradas que se leen en cada ciclo
 
+strategies: [ema_rsi_atr]   # nombres definidos en config/strategies.yaml
+
+backtest:
+  bars: 5000              # velas históricas que se descargan de MT5
+  spread_pips: 1.0        # spread simulado en cada entrada
+  initial_balance: 10000  # saldo inicial simulado
+
 risk:
   risk_per_trade: 0.01    # fracción del saldo que se acepta perder por operación (0.01 = 1 %)
   max_daily_loss: 0.03    # pérdida diaria máxima como fracción del saldo

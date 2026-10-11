@@ -17,7 +17,7 @@ ENV = "MT5_LOGIN=123456\nMT5_PASSWORD=secreto\nMT5_SERVER=Broker-Demo\n"
 
 
 def make_root(tmp_path, yaml_text=YAML, env_text=ENV, name="demo"):
-    (tmp_path / "config").mkdir()
+    (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / f"{name}.yaml").write_text(yaml_text, encoding="utf-8")
     if env_text is not None:
         (tmp_path / f".env.{name}").write_text(env_text, encoding="utf-8")
@@ -76,3 +76,32 @@ def test_missing_credentials_are_rejected(tmp_path):
     root = make_root(tmp_path, env_text="MT5_SERVER=Broker-Demo\n")
     with pytest.raises(ValidationError):
         load_profile("demo", root=root)
+
+
+def test_defaults_for_strategies_and_backtest(tmp_path):
+    profile = load_profile("demo", root=make_root(tmp_path))
+    assert profile.strategies == ["ema_rsi_atr"]
+    assert profile.backtest.bars == 5000 and profile.backtest.spread_pips == 1.0
+    assert profile.backtest.initial_balance == 10000.0
+
+
+def test_profile_can_override_strategies_and_backtest(tmp_path):
+    extra = "strategies: [fib_pullback, ema_rsi_atr]\nbacktest:\n  bars: 3000\n  spread_pips: 0.7\n"
+    profile = load_profile("demo", root=make_root(tmp_path, yaml_text=YAML + extra))
+    assert profile.strategies == ["fib_pullback", "ema_rsi_atr"]
+    assert profile.backtest.bars == 3000 and profile.backtest.spread_pips == 0.7
+
+
+def test_invalid_backtest_and_strategies_are_rejected(tmp_path):
+    with pytest.raises(ValidationError):
+        load_profile("demo", root=make_root(tmp_path, yaml_text=YAML + "backtest:\n  bars: 10\n"))
+    with pytest.raises(ValidationError):
+        load_profile("demo", root=make_root(tmp_path / "otro", yaml_text=YAML + "strategies: []\n"))
+
+
+def test_profile_loads_without_credentials_when_not_required(tmp_path):
+    root = make_root(tmp_path, env_text=None)
+    profile = load_profile("demo", root=root, require_credentials=False)
+    assert profile.mt5 is None
+    with pytest.raises(FileNotFoundError):
+        load_profile("demo", root=root)  # por defecto sí exige el .env
