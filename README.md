@@ -127,6 +127,30 @@ descartar ayudó o estorbó y si el demo se parece al backtest (+0,1 a +0,2 R po
 **teórico**: usa los niveles del aviso, no las órdenes reales de tu cuenta, y con menos de 30 operaciones cerradas
 no permite juzgar la estrategia.
 
+## Interfaz gráfica (entrega 1)
+
+```powershell
+pip install -e .[ui]
+py -m forexplat ui --profile demo
+```
+
+Se abre en el navegador (`http://127.0.0.1:8501`), solo accesible desde tu propio PC. Deja la ventana de PowerShell
+abierta mientras la uses; Ctrl+C la cierra. Con MetaTrader 5 abierto, tiene cuatro pestañas:
+
+- **Inicio:** estado de MetaTrader 5 (cuenta, saldo), de Telegram y de la vigilancia. En el perfil real aparece un
+  aviso rojo permanente. Pulsa «Actualizar estado» para consultar.
+- **Señales:** «Revisar ahora» muestra la alerta (dirección, entrada, SL, TP, lote, motivos) o el estado de cada regla.
+- **Backtest:** estrategia, par, temporalidad, velas, spread y saldo, con velas de MetaTrader 5 o de un CSV. Por
+  defecto separa el 70 % más antiguo (ajuste) del 30 % más reciente (validación) y muestra ambos resultados por
+  separado: solo cuenta lo que se sostiene en la validación. Avisa si hay menos de 30 operaciones y si llevas
+  muchas pruebas sobre los mismos datos.
+- **Vigilancia:** inicia y detiene `watch` como proceso aparte, que sigue vivo aunque cierres la pestaña (pero no si
+  apagas el PC), con su registro en `logs/watch_<perfil>.log`. Desde la interfaz solo se inicia en demo.
+
+Para el perfil real: `py -m forexplat ui --profile real --i-understand-real-account` (pide escribir `REAL`).
+Los secretos (`.env.*`) nunca se muestran. La interfaz no envía órdenes ni cambia estrategias: la edición de
+estrategias y perfil y el diario llegan en la entrega 2. La consola sigue funcionando igual.
+
 ## Perfiles demo y real
 
 | | Demo | Real |
@@ -163,8 +187,10 @@ src/forexplat/
   telegram.py      cliente de la API de Telegram
   watch.py         vigilancia, avisos sin repetir y diario de decisiones
   review.py        revisión de las alertas enviadas
+  safeio.py        escritura atómica y bloqueo de archivos compartidos
+  ui/              interfaz gráfica (Streamlit): app.py dibuja; services.py y watchproc.py tienen la lógica
   data.py          velas en CSV
-  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch` y `review`
+  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch`, `review` y `ui`
 tests/             pruebas (no necesitan MT5)
 ```
 
