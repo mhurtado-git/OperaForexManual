@@ -8,6 +8,7 @@
     py -m forexplat telegram-test  --profile demo
     py -m forexplat watch --profile demo
     py -m forexplat review --profile demo
+    py -m forexplat ui --profile demo
 """
 
 from __future__ import annotations
@@ -73,6 +74,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         _add_profile_args(sub.add_parser(name, help=text))
 
     _add_profile_args(sub.add_parser("review", help="Revisa cómo terminaron las alertas enviadas y tus decisiones"))
+
+    ui = sub.add_parser("ui", help="Abre la interfaz gráfica en el navegador (solo en este PC)")
+    _add_profile_args(ui)
+    ui.add_argument("--port", type=int, default=8501)
 
     watch = sub.add_parser(
         "watch", help="Vigila las señales y las avisa por Telegram (Ctrl+C para detener)"
@@ -294,6 +299,24 @@ def _cmd_watch(args: argparse.Namespace, root: Path) -> None:
             time.sleep(max(interval - 50, 0))
 
 
+def _cmd_ui(args: argparse.Namespace, root: Path) -> None:
+    import os
+    import subprocess
+
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        raise ValueError("Falta Streamlit. Instálalo con:  pip install -e .[ui]") from None
+    _confirm_real(args)
+    app = Path(__file__).resolve().parent / "ui" / "app.py"
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app),
+        "--server.address", "127.0.0.1", "--server.port", str(args.port),
+        "--browser.gatherUsageStats", "false", "--", "--profile", args.profile,
+    ]
+    subprocess.run(command, env={**os.environ, "FOREXPLAT_ROOT": str(root)}, check=False)
+
+
 def _cmd_review(args: argparse.Namespace, root: Path) -> None:
     from .review import bars_needed, evaluate_alert, format_review, load_alerts
     from .risk import SymbolSpec
@@ -348,6 +371,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             _cmd_telegram_setup(args, root)
         elif args.command == "telegram-test":
             _cmd_telegram_test(args, root)
+        elif args.command == "ui":
+            _cmd_ui(args, root)
         elif args.command == "review":
             _cmd_review(args, root)
         elif args.command == "watch":

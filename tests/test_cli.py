@@ -265,3 +265,19 @@ def test_review_without_alerts_and_with_alerts(tmp_path):
         restore()
     assert code == 0, err
     assert "Revisión de 1 alertas" in out and "TP" in out and "+2.00" in out and "Sin decisión: 1" in out
+
+
+def test_ui_command_explains_how_to_install_streamlit_when_missing(tmp_path):
+    import sys
+
+    root = make_root(tmp_path)
+    saved = sys.modules.get("streamlit")
+    sys.modules["streamlit"] = None  # hace que `import streamlit` falle
+    try:
+        code, _, err = run(["ui", "--profile", "demo"], root)
+    finally:
+        if saved is None:
+            sys.modules.pop("streamlit", None)
+        else:
+            sys.modules["streamlit"] = saved
+    assert code == 1 and "pip install -e .[ui]" in err
