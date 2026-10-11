@@ -7,6 +7,7 @@
     py -m forexplat telegram-setup --profile demo
     py -m forexplat telegram-test  --profile demo
     py -m forexplat watch --profile demo
+    py -m forexplat review --profile demo
 """
 
 from __future__ import annotations
@@ -70,6 +71,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ("telegram-test", "Envía un mensaje de prueba a tu Telegram"),
     ):
         _add_profile_args(sub.add_parser(name, help=text))
+
+    _add_profile_args(sub.add_parser("review", help="Revisa cómo terminaron las alertas enviadas y tus decisiones"))
 
     watch = sub.add_parser(
         "watch", help="Vigila las señales y las avisa por Telegram (Ctrl+C para detener)"
@@ -291,6 +294,35 @@ def _cmd_watch(args: argparse.Namespace, root: Path) -> None:
             time.sleep(max(interval - 50, 0))
 
 
+def _cmd_review(args: argparse.Namespace, root: Path) -> None:
+    from .review import bars_needed, evaluate_alert, format_review, load_alerts
+    from .risk import SymbolSpec
+
+    _confirm_real(args)
+    profile = load_profile(args.profile, root)
+    alerts = load_alerts(root, profile.mode.value)
+    if not alerts:
+        print(format_review([], profile.mode.value))
+        return
+    Mt5Client = _mt5_client_class()
+    rows = []
+    with Mt5Client(profile) as client:
+        for (symbol, timeframe), group in _group_alerts(alerts).items():
+            spec = SymbolSpec.from_summary(client.symbol_summary(symbol))
+            candles = client.get_candles(symbol, timeframe, bars_needed(group))
+            spread = spec.spread_points * spec.point
+            rows += [{**a, **evaluate_alert(a, candles, spread)} for a in group]
+    rows.sort(key=lambda row: row["candle_time"])
+    print(format_review(rows, profile.mode.value))
+
+
+def _group_alerts(alerts: list[dict]) -> dict:
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for alert in alerts:
+        groups.setdefault((alert["symbol"], alert["timeframe"]), []).append(alert)
+    return groups
+
+
 def _console_safe() -> None:
     """Evita que un carácter que la consola no sabe imprimir tumbe el programa."""
     for stream in (sys.stdout, sys.stderr):
@@ -316,6 +348,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             _cmd_telegram_setup(args, root)
         elif args.command == "telegram-test":
             _cmd_telegram_test(args, root)
+        elif args.command == "review":
+            _cmd_review(args, root)
         elif args.command == "watch":
             _cmd_watch(args, root)
     except KeyboardInterrupt:

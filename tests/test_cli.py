@@ -239,3 +239,29 @@ def test_watch_once_sends_alert_and_creates_state(tmp_path):
     assert code == 0, err
     assert len(fake_tg.sent) == 1 and "alerta long enviada" in out
     assert (root / "state" / "alerts_demo.json").exists()
+
+
+def test_review_without_alerts_and_with_alerts(tmp_path):
+    root = telegram_root(tmp_path)
+    code, out, err = run(["review", "--profile", "demo"], root)
+    assert code == 0, err
+    assert "Todavía no hay alertas" in out
+
+    from helpers import make_candles
+
+    alert = {"strategy": "demo", "symbol": "EURUSD", "timeframe": "H4", "direction": "long",
+             "candle_time": "2026-01-05 10:00:00+00:00", "entry": 1.1, "sl": 1.098, "tp": 1.104,
+             "lots": 0.5, "message_id": 1, "decision": None}
+    (root / "state").mkdir()
+    import json
+
+    (root / "state" / "alerts_demo.json").write_text(json.dumps({"alerts": {"a1": alert}}), encoding="utf-8")
+    frame = make_candles([1.1] * 30)
+    frame.loc[13, "high"] = 1.1041
+    restore = with_fake_client(FakeClient(frame))
+    try:
+        code, out, err = run(["review", "--profile", "demo"], root)
+    finally:
+        restore()
+    assert code == 0, err
+    assert "Revisión de 1 alertas" in out and "TP" in out and "+2.00" in out and "Sin decisión: 1" in out

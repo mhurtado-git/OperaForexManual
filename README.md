@@ -115,6 +115,18 @@ ejecutas tú. Solo responde a tu `chat_id`; las pulsaciones de otros usuarios se
 Para que `watch` funcione, MetaTrader 5 debe estar abierto y el PC encendido. Si se cierra el programa, no hay avisos.
 `py -m forexplat watch --once` hace una sola revisión (útil para probar).
 
+### Revisión de resultados: `review`
+
+```powershell
+py -m forexplat review --profile demo
+```
+
+Lista las alertas enviadas, qué decidiste (tomada, descartada o sin decisión) y cómo terminó cada una con las
+velas posteriores (TP, SL o abierta), con el resultado en R y un resumen por tipo de decisión. Sirve para ver si
+descartar ayudó o estorbó y si el demo se parece al backtest (+0,1 a +0,2 R por operación). El resultado es
+**teórico**: usa los niveles del aviso, no las órdenes reales de tu cuenta, y con menos de 30 operaciones cerradas
+no permite juzgar la estrategia.
+
 ## Perfiles demo y real
 
 | | Demo | Real |
@@ -150,8 +162,9 @@ src/forexplat/
   alerts.py        texto de las alertas y del informe
   telegram.py      cliente de la API de Telegram
   watch.py         vigilancia, avisos sin repetir y diario de decisiones
+  review.py        revisión de las alertas enviadas
   data.py          velas en CSV
-  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test` y `watch`
+  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch` y `review`
 tests/             pruebas (no necesitan MT5)
 ```
 
