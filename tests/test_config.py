@@ -105,3 +105,17 @@ def test_profile_loads_without_credentials_when_not_required(tmp_path):
     assert profile.mt5 is None
     with pytest.raises(FileNotFoundError):
         load_profile("demo", root=root)  # por defecto sí exige el .env
+
+
+def test_telegram_settings_are_read_from_env_and_hidden(tmp_path):
+    env = ENV + "TELEGRAM_BOT_TOKEN=111:TOKENSECRETO\nTELEGRAM_CHAT_ID=987\n"
+    profile = load_profile("demo", root=make_root(tmp_path, env_text=env))
+    assert profile.telegram.chat_id == 987
+    assert profile.telegram.token.get_secret_value() == "111:TOKENSECRETO"
+    assert "TOKENSECRETO" not in repr(profile)
+
+
+def test_telegram_is_optional(tmp_path):
+    assert load_profile("demo", root=make_root(tmp_path)).telegram is None
+    env = ENV + "TELEGRAM_BOT_TOKEN=111:X\nTELEGRAM_CHAT_ID=\n"
+    assert load_profile("demo", root=make_root(tmp_path / "b", env_text=env)).telegram.chat_id is None

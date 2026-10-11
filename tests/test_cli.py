@@ -132,3 +132,110 @@ def test_real_profile_requires_the_explicit_flag(tmp_path):
             assert "--i-understand-real-account" in str(exit_)
         else:
             raise AssertionError(f"{command} no exigió la bandera del perfil real")
+
+
+# --- Telegram y vigilancia ------------------------------------------------------
+
+TG_ENV = ENV + "TELEGRAM_BOT_TOKEN=111:TOKENSECRETO\n"
+
+
+def telegram_root(tmp_path, chat_id=True):
+    root = make_root(tmp_path)
+    (root / ".env.demo").write_text(TG_ENV + ("TELEGRAM_CHAT_ID=42\n" if chat_id else ""), encoding="utf-8")
+    return root
+
+
+def with_fake_http(handler):
+    import forexplat.telegram as module
+
+    original = module.TelegramClient
+    module.TelegramClient = lambda token, chat_id=None: original(token, chat_id, http=handler)
+
+    def restore():
+        module.TelegramClient = original
+
+    return restore
+
+
+def test_telegram_commands_need_token_and_chat_id(tmp_path):
+    root = make_root(tmp_path, credentials=True)  # sin TELEGRAM_BOT_TOKEN
+    for command in ("telegram-setup", "telegram-test", "watch"):
+        code, _, err = run([command, "--profile", "demo"], root)
+        assert code == 1 and "TELEGRAM_BOT_TOKEN" in err, command
+    root = telegram_root(tmp_path / "otro", chat_id=False)
+    for command in ("telegram-test", "watch"):
+        code, _, err = run([command, "--profile", "demo"], root)
+        assert code == 1 and "TELEGRAM_CHAT_ID" in err and "TOKENSECRETO" not in err, command
+
+
+def test_telegram_setup_lists_private_chats(tmp_path):
+    root = telegram_root(tmp_path, chat_id=False)
+
+    def http(url, payload, timeout):
+        if url.endswith("/getMe"):
+            return {"ok": True, "result": {"username": "mi_bot"}}
+        return {"ok": True, "result": [
+            {"update_id": 1, "message": {"chat": {"id": 987, "type": "private", "first_name": "Marco"}}},
+            {"update_id": 2, "message": {"chat": {"id": -5, "type": "group"}}},
+        ]}
+
+    restore = with_fake_http(http)
+    try:
+        code, out, err = run(["telegram-setup", "--profile", "demo"], root)
+    finally:
+        restore()
+    assert code == 0, err
+    assert "@mi_bot" in out and "chat_id 987  (Marco)" in out and "-5" not in out
+    assert "TELEGRAM_CHAT_ID=" in out and "TOKENSECRETO" not in out
+
+
+def test_telegram_setup_without_messages_explains_what_to_do(tmp_path):
+    root = telegram_root(tmp_path, chat_id=False)
+    restore = with_fake_http(lambda url, payload, timeout: {"ok": True, "result": {"username": "b"} if "getMe" in url else []})
+    try:
+        code, out, _ = run(["telegram-setup", "--profile", "demo"], root)
+    finally:
+        restore()
+    assert code == 0 and "/start" in out
+
+
+def test_telegram_test_sends_a_message(tmp_path):
+    root = telegram_root(tmp_path)
+    sent = []
+
+    def http(url, payload, timeout):
+        sent.append(payload)
+        return {"ok": True, "result": {"message_id": 1}}
+
+    restore = with_fake_http(http)
+    try:
+        code, out, _ = run(["telegram-test", "--profile", "demo"], root)
+    finally:
+        restore()
+    assert code == 0 and "enviado" in out
+    assert sent[0]["chat_id"] == 42 and sent[0]["text"].startswith("[DEMO] Prueba")
+
+
+def test_watch_once_sends_alert_and_creates_state(tmp_path):
+    from fake_telegram import FakeTelegram
+    from test_scanner import LONG_CANDLES
+
+    root = telegram_root(tmp_path)
+    (root / "config" / "strategies.yaml").write_text(
+        "strategies:\n  demo:\n    trigger: cruce\n    rules:\n"
+        "      - {type: ma_cross, name: cruce, fast: 3, slow: 5}\n      - {type: atr_filter, name: atr}\n"
+        "    stop_loss: {mode: fixed_pips, pips: 20}\n    take_profit: {mode: rr, reward_risk: 2.0}\n",
+        encoding="utf-8",
+    )
+    fake_tg = FakeTelegram(chat_id=42)
+    original_tg = cli._telegram
+    cli._telegram = lambda profile, need_chat: fake_tg
+    restore = with_fake_client(FakeClient(LONG_CANDLES))
+    try:
+        code, out, err = run(["watch", "--profile", "demo", "--once", "--strategy", "demo", "--symbol", "EURUSD"], root)
+    finally:
+        restore()
+        cli._telegram = original_tg
+    assert code == 0, err
+    assert len(fake_tg.sent) == 1 and "alerta long enviada" in out
+    assert (root / "state" / "alerts_demo.json").exists()

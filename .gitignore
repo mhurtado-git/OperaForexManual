@@ -16,3 +16,6 @@ logs/
 
 # Informes de backtest
 reports/
+
+state/
+journal/

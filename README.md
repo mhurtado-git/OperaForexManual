@@ -2,7 +2,8 @@
 
 Fase 1: conexión con MetaTrader 5, perfiles **demo** y **real**, y salvaguardas.
 Fase 2: estrategias parametrizables, alertas de largo/corto con stop loss, take profit y lote, y backtest.
-No envía órdenes: **tú decides y ejecutas en MetaTrader 5**. El envío con confirmación llega en la fase 3.
+Fase 3: avisos por Telegram con botones para registrar si tomaste o descartaste cada señal.
+No envía órdenes: **tú decides y ejecutas en MetaTrader 5**.
 
 > Proyecto técnico, no es asesoría financiera. Operar en Forex implica riesgo de perder el capital.
 
@@ -92,9 +93,27 @@ fallar en vivo. Con menos de 30 operaciones el resultado no es fiable. Valida si
 
 ### Limitaciones conocidas
 
-- `max_daily_loss` está en la configuración pero **todavía no se aplica**: llega con las órdenes (fase 3).
+- `max_daily_loss` está en la configuración pero **todavía no se aplica**: llegará con el envío de órdenes.
 - Las llamadas nuevas a MT5 (precio actual y margen requerido) se probaron solo con un cliente simulado;
   confírmalas en tu cuenta demo con `signals`.
+
+## Alertas por Telegram (fase 3)
+
+1. En Telegram, con `@BotFather`, envía `/newbot` y copia el token. **No lo compartas ni lo subas a Git.**
+2. Agrega a `.env.demo` la línea `TELEGRAM_BOT_TOKEN=...` (hay un ejemplo en `.env.demo.example`).
+3. Abre tu bot en Telegram y envíale `/start`.
+4. `py -m forexplat telegram-setup --profile demo` muestra tu `chat_id`; agrégalo a `.env.demo` como `TELEGRAM_CHAT_ID=...`.
+5. `py -m forexplat telegram-test --profile demo` envía un mensaje de prueba.
+6. `py -m forexplat watch --profile demo` deja el programa vigilando (Ctrl+C para detener). Cada revisión evalúa la
+   última vela cerrada y, si hay una señal nueva que pasa el gestor de riesgo, te envía la alerta con entrada, SL, TP
+   y lote. Una misma vela no se avisa dos veces, ni siquiera tras reiniciar (`state/`).
+
+Los botones **La tomé** y **Descartar** solo registran tu decisión en `journal/decisiones_<perfil>.csv`; sirven para
+comparar después lo que hiciste con lo que dijo la estrategia. **No se envía ninguna orden a MetaTrader 5**: la
+ejecutas tú. Solo responde a tu `chat_id`; las pulsaciones de otros usuarios se ignoran.
+
+Para que `watch` funcione, MetaTrader 5 debe estar abierto y el PC encendido. Si se cierra el programa, no hay avisos.
+`py -m forexplat watch --once` hace una sola revisión (útil para probar).
 
 ## Perfiles demo y real
 
@@ -129,8 +148,10 @@ src/forexplat/
   backtest.py      simulador y métricas
   scanner.py       evalúa la última vela y arma el plan de operación
   alerts.py        texto de las alertas y del informe
+  telegram.py      cliente de la API de Telegram
+  watch.py         vigilancia, avisos sin repetir y diario de decisiones
   data.py          velas en CSV
-  cli.py           comandos `check`, `signals` y `backtest`
+  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test` y `watch`
 tests/             pruebas (no necesitan MT5)
 ```
 
@@ -166,7 +187,7 @@ Si clonas el repositorio en otra máquina, activa el hook una vez: `git config c
 
 1. **Conexión y datos (demo):** hecha.
 2. **Señales y riesgo:** motor de señales y gestor de riesgo (SL, TP y lote), con backtest: esta entrega.
-3. **Alertas:** Telegram con botones para confirmar o descartar; envío de la orden con SL y TP tras la confirmación.
+3. **Alertas:** Telegram con botones para registrar tu decisión (hecha). Envío de la orden con SL y TP tras la confirmación: pendiente.
 4. **Capa Claude:** validación y explicación de cada setup con salida JSON.
 5. **Prueba en demo** durante al menos un mes.
 6. **Real con riesgo mínimo.**

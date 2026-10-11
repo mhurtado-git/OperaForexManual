@@ -53,6 +53,11 @@ class Mt5Credentials(BaseModel):
     path: str | None = None
 
 
+class TelegramConfig(BaseModel):
+    token: SecretStr
+    chat_id: int | None = None
+
+
 class Profile(BaseModel):
     mode: Mode
     symbols: list[str] = Field(min_length=1)
@@ -63,6 +68,8 @@ class Profile(BaseModel):
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     # None cuando el perfil se carga sin credenciales (por ejemplo, backtest con un archivo CSV).
     mt5: Mt5Credentials | None = None
+    # None cuando .env.<perfil> no trae TELEGRAM_BOT_TOKEN.
+    telegram: TelegramConfig | None = None
 
     @field_validator("symbols")
     @classmethod
@@ -112,6 +119,11 @@ def load_profile(name: str, root: Path = ROOT, require_credentials: bool = True)
             "server": env.get("MT5_SERVER"),
             "path": env.get("MT5_PATH") or None,
         }
+        if env.get("TELEGRAM_BOT_TOKEN"):
+            data["telegram"] = {
+                "token": env["TELEGRAM_BOT_TOKEN"].strip(),
+                "chat_id": (env.get("TELEGRAM_CHAT_ID") or "").strip() or None,
+            }
 
     profile = Profile.model_validate(data)
     if profile.mode is not expected_mode:

@@ -4,6 +4,9 @@
     py -m forexplat signals  --profile demo
     py -m forexplat backtest --profile demo --strategy ema_rsi_atr
     py -m forexplat backtest --profile demo --csv velas.csv
+    py -m forexplat telegram-setup --profile demo
+    py -m forexplat telegram-test  --profile demo
+    py -m forexplat watch --profile demo
 """
 
 from __future__ import annotations
@@ -61,6 +64,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     backtest.add_argument("--out", default="reports", help="Carpeta del informe de operaciones (CSV)")
     backtest.add_argument("--no-report", action="store_true", help="No guardar el CSV de operaciones")
     backtest.add_argument("--save-candles", help="Guarda las velas descargadas de MT5 en este CSV")
+
+    for name, text in (
+        ("telegram-setup", "Muestra el chat_id de quien escribió a tu bot (para TELEGRAM_CHAT_ID)"),
+        ("telegram-test", "Envía un mensaje de prueba a tu Telegram"),
+    ):
+        _add_profile_args(sub.add_parser(name, help=text))
+
+    watch = sub.add_parser(
+        "watch", help="Vigila las señales y las avisa por Telegram (Ctrl+C para detener)"
+    )
+    _add_profile_args(watch)
+    watch.add_argument("--strategy", action="append", help="Estrategia (repetible). Por defecto, las del perfil")
+    watch.add_argument("--symbol", action="append", help="Símbolo (repetible). Por defecto, los del perfil")
+    watch.add_argument("--interval", type=int, default=60, help="Segundos entre revisiones (mínimo 20)")
+    watch.add_argument("--once", action="store_true", help="Hace una sola revisión y termina")
     return parser.parse_args(argv)
 
 
@@ -182,6 +200,97 @@ def _cmd_backtest(args: argparse.Namespace, root: Path) -> None:
         print(f"\nOperaciones guardadas en {save_csv(result.trades, path)}")
 
 
+def _telegram(profile, need_chat: bool):
+    from .telegram import TelegramClient
+
+    config = profile.telegram
+    if config is None:
+        raise ValueError(
+            f"Falta TELEGRAM_BOT_TOKEN en .env.{profile.mode.value}. Crea el bot con @BotFather "
+            "y agrega la línea TELEGRAM_BOT_TOKEN=... a ese archivo."
+        )
+    if need_chat and config.chat_id is None:
+        raise ValueError(
+            f"Falta TELEGRAM_CHAT_ID en .env.{profile.mode.value}. Escribe /start a tu bot, ejecuta "
+            "`telegram-setup` y agrega la línea TELEGRAM_CHAT_ID=... a ese archivo."
+        )
+    return TelegramClient(config.token.get_secret_value(), config.chat_id)
+
+
+def _cmd_telegram_setup(args: argparse.Namespace, root: Path) -> None:
+    _confirm_real(args)
+    tg = _telegram(load_profile(args.profile, root), need_chat=False)
+    print(f"Bot conectado: @{tg.get_me().get('username', '?')}")
+    chats: dict[int, str] = {}
+    for update in tg.get_updates():
+        message = update.get("message")
+        if message and message.get("chat", {}).get("type") == "private":
+            chat = message["chat"]
+            chats[chat["id"]] = " ".join(
+                part for part in (chat.get("first_name"), chat.get("last_name")) if part
+            ) or str(chat["id"])
+    if not chats:
+        print("Nadie ha escrito al bot todavía. Abre tu bot en Telegram, envíale /start y repite este comando.")
+        return
+    for chat_id, name in chats.items():
+        print(f"chat_id {chat_id}  ({name})")
+    print(f"\nAgrega a .env.{args.profile} la línea:  TELEGRAM_CHAT_ID=<el número de arriba>")
+    if len(chats) > 1:
+        print("Aparecen varios chats: usa solo el tuyo.")
+
+
+def _cmd_telegram_test(args: argparse.Namespace, root: Path) -> None:
+    _confirm_real(args)
+    profile = load_profile(args.profile, root)
+    tg = _telegram(profile, need_chat=True)
+    tg.send_message(f"[{profile.mode.value.upper()}] Prueba de alertas: si lees esto, Telegram está bien configurado.")
+    print("Mensaje de prueba enviado.")
+
+
+def _cmd_watch(args: argparse.Namespace, root: Path) -> None:
+    import time
+
+    from .strategy import get_strategy, load_strategies
+    from .telegram import TelegramError
+    from .watch import State, handle_updates, run_cycle
+
+    _confirm_real(args)
+    profile = load_profile(args.profile, root)
+    tg = _telegram(profile, need_chat=True)
+    available = load_strategies(root)
+    strategies = [get_strategy(available, name) for name in (args.strategy or profile.strategies)]
+    symbols = args.symbol or profile.symbols
+    interval = max(args.interval, 20)
+    state = State(root / "state" / f"alerts_{profile.mode.value}.json")
+    journal = root / "journal" / f"decisiones_{profile.mode.value}.csv"
+    Mt5Client = _mt5_client_class()
+
+    names = ", ".join(s.name for s in strategies)
+    print(f"Vigilando {', '.join(symbols)} {profile.timeframe} con {names}. Ctrl+C para detener.")
+    with Mt5Client(profile) as client:
+        if not args.once:
+            tg.send_message(
+                f"[{profile.mode.value.upper()}] Vigilancia iniciada: {names} | {', '.join(symbols)} "
+                f"{profile.timeframe}. Te aviso cuando cierre una vela con señal."
+            )
+        while True:
+            try:
+                for event in run_cycle(client, tg, profile, strategies, symbols, state):
+                    print(event)
+                wait = 0 if args.once else min(interval, 50)
+                for event in handle_updates(tg, state, journal, timeout=wait):
+                    print(event)
+            except (RuntimeError, TelegramError) as error:
+                if args.once:
+                    raise
+                print(f"Aviso: {error}. Reintento en {interval} s.")
+                time.sleep(interval)
+                continue
+            if args.once:
+                return
+            time.sleep(max(interval - 50, 0))
+
+
 def _console_safe() -> None:
     """Evita que un carácter que la consola no sabe imprimir tumbe el programa."""
     for stream in (sys.stdout, sys.stderr):
@@ -203,6 +312,15 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             _cmd_signals(args, root)
         elif args.command == "backtest":
             _cmd_backtest(args, root)
+        elif args.command == "telegram-setup":
+            _cmd_telegram_setup(args, root)
+        elif args.command == "telegram-test":
+            _cmd_telegram_test(args, root)
+        elif args.command == "watch":
+            _cmd_watch(args, root)
+    except KeyboardInterrupt:
+        print("\nDetenido.")
+        return 0
     except (FileNotFoundError, ValueError, AccountModeMismatch) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
