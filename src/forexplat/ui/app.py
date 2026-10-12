@@ -17,7 +17,7 @@ import streamlit as st
 from forexplat.alerts import format_scan
 from forexplat.config import ROOT, VALID_TIMEFRAMES, load_profile
 from forexplat.strategy import load_strategies
-from forexplat.ui import services
+from forexplat.ui import pages_edit, services
 from forexplat.ui.watchproc import WatchController
 
 
@@ -28,12 +28,7 @@ def _state(key: str, default=None):
 
 
 def _show_error(error: Exception, profile_name: str, root: Path) -> None:
-    secrets: list[str] = []
-    try:
-        secrets = services._secrets(load_profile(profile_name, root))
-    except Exception:  # noqa: BLE001 - sin perfil no hay secretos que ocultar
-        pass
-    st.error(services.friendly_error(error, secrets))
+    st.error(services.friendly_error(error, services.safe_secrets(profile_name, root)))
 
 
 # --- Inicio -------------------------------------------------------------------
@@ -230,13 +225,21 @@ def render(profile_name: str, root: Path) -> None:
     st.set_page_config(page_title="Operación Forex manual", layout="wide")
     st.title("Operación manual en Forex")
     controller = WatchController(root, profile_name)
-    tab_home, tab_signals, tab_backtest, tab_watch = st.tabs(["Inicio", "Señales", "Backtest", "Vigilancia"])
+    tab_home, tab_signals, tab_backtest, tab_journal, tab_strategies, tab_profile, tab_watch = st.tabs(
+        ["Inicio", "Señales", "Backtest", "Diario", "Estrategias", "Perfil y riesgo", "Vigilancia"]
+    )
     with tab_home:
         _home(profile_name, root, controller)
     with tab_signals:
         _signals(profile_name, root)
     with tab_backtest:
         _backtest(profile_name, root)
+    with tab_journal:
+        pages_edit.journal_tab(profile_name, root)
+    with tab_strategies:
+        pages_edit.strategies_tab(profile_name, root)
+    with tab_profile:
+        pages_edit.profile_tab(profile_name, root)
     with tab_watch:
         _watch(profile_name, root, controller)
 

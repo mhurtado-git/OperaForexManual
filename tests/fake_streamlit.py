@@ -53,6 +53,12 @@ class FakeStreamlit(types.ModuleType):
     def checkbox(self, label, value=False, key=None, **kwargs):
         return self.values.get(key, value)
 
+    def text_input(self, label, value="", key=None, **kwargs):
+        return self.values.get(key, value)
+
+    def rerun(self):
+        self._log("rerun")
+
     def file_uploader(self, label, key=None, **kwargs):
         return self.uploaded
 
@@ -79,11 +85,13 @@ class FakeStreamlit(types.ModuleType):
 
 def _forget_app():
     """Olvida app.py para que se vuelva a importar con el Streamlit falso de cada prueba."""
-    for module in [m for m in sys.modules if m.startswith("forexplat.ui.app")]:
+    names = ("app", "pages_edit")
+    for module in [m for m in sys.modules if m.split(".")[-1] in names and m.startswith("forexplat.ui.")]:
         del sys.modules[module]
     package = sys.modules.get("forexplat.ui")
-    if package is not None and hasattr(package, "app"):
-        delattr(package, "app")
+    for name in names:
+        if package is not None and hasattr(package, name):
+            delattr(package, name)
 
 
 def install(**kwargs):

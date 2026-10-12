@@ -53,6 +53,14 @@ def _secrets(profile) -> list[str]:
     return values
 
 
+def safe_secrets(profile_name: str, root: Path) -> list[str]:
+    """Secretos del perfil para ocultarlos en mensajes; vacío si el perfil no se puede cargar."""
+    try:
+        return _secrets(load_profile(profile_name, root))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _client_class(client_class=None):
     if client_class is not None:
         return client_class
@@ -178,3 +186,80 @@ def metrics_table(**columns: dict | None) -> pd.DataFrame:
             row[name] = "sin pérdidas" if value is None else fmt.format(value)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+# --- diario ---------------------------------------------------------------------
+
+def journal_path(root: Path, profile_name: str) -> Path:
+    return root / "journal" / f"decisiones_{profile_name}.csv"
+
+
+def load_journal_alerts(root: Path, profile_name: str) -> list[dict]:
+    """Alertas enviadas y decisiones guardadas (solo archivos locales, sin MetaTrader 5)."""
+    from ..review import load_alerts
+
+    return load_alerts(root, profile_name)
+
+
+def compute_review(profile_name: str, root: Path, client_class=None) -> list[dict]:
+    """Alertas con su resultado teórico (TP, SL o abierta), usando velas de MetaTrader 5."""
+    from ..review import review_rows
+
+    alerts = load_journal_alerts(root, profile_name)
+    if not alerts:
+        return []
+    profile = load_profile(profile_name, root)
+    with _client_class(client_class)(profile) as client:
+        return review_rows(client, alerts)
+
+
+def save_decision(
+    root: Path, profile_name: str, alert: dict, decision: str | None, note: str = "",
+    real_entry=None, real_lots=None, real_result=None, ticket=None,
+) -> dict:
+    """Guarda en el diario la decisión, la nota y los datos reales de la orden de una alerta."""
+    from datetime import datetime, timezone
+
+    from .. import journal
+
+    def text(value):
+        return "" if value in (None, "") else value
+
+    return journal.upsert(
+        journal_path(root, profile_name),
+        {
+            "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "alert_id": alert["alert_id"],
+            **{key: alert[key] for key in (
+                "strategy", "symbol", "timeframe", "direction", "candle_time", "entry", "sl", "tp", "lots",
+            )},
+            "decision": decision or "",
+            "note": note.strip(),
+            "real_entry": text(real_entry), "real_lots": text(real_lots),
+            "real_result": text(real_result), "ticket": text(ticket),
+        },
+    )
+
+
+def find_real_trade(profile_name: str, root: Path, alert: dict, client_class=None) -> dict | None:
+    """Busca en el historial de MetaTrader 5 la operación que abriste tras la alerta."""
+    from datetime import datetime, timedelta, timezone
+
+    import pandas as pd
+
+    from .. import journal
+    from ..history import match_alert_deals
+
+    taken = {
+        int(float(row["ticket"])) for row in journal.load(journal_path(root, profile_name))
+        if row["ticket"] != "" and row["alert_id"] != alert["alert_id"]
+    }
+    signal = pd.Timestamp(alert["candle_time"])
+    if signal.tzinfo is None:
+        signal = signal.tz_localize("UTC")
+    profile = load_profile(profile_name, root)
+    with _client_class(client_class)(profile) as client:
+        deals = client.get_deals(
+            (signal - timedelta(days=1)).to_pydatetime(), datetime.now(timezone.utc) + timedelta(days=1)
+        )
+    return match_alert_deals(alert, deals, exclude_positions=taken)
