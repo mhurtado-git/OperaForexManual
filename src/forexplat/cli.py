@@ -21,6 +21,8 @@ from pathlib import Path
 from .config import ROOT, load_profile
 from .safety import AccountModeMismatch
 
+POLL_SECONDS = 15  # espera larga corta: algunas redes cortan las conexiones inactivas de ~50 s
+
 
 def _add_profile_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", choices=("demo", "real"), default="demo")
@@ -285,7 +287,7 @@ def _cmd_watch(args: argparse.Namespace, root: Path) -> None:
             try:
                 for event in run_cycle(client, tg, profile, strategies, symbols, state):
                     print(event)
-                wait = 0 if args.once else min(interval, 50)
+                wait = 0 if args.once else min(interval, POLL_SECONDS)
                 for event in handle_updates(tg, state, journal, timeout=wait):
                     print(event)
             except (RuntimeError, TelegramError) as error:
@@ -296,7 +298,7 @@ def _cmd_watch(args: argparse.Namespace, root: Path) -> None:
                 continue
             if args.once:
                 return
-            time.sleep(max(interval - 50, 0))
+            time.sleep(max(interval - POLL_SECONDS, 0))
 
 
 def _cmd_ui(args: argparse.Namespace, root: Path) -> None:
