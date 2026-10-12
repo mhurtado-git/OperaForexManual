@@ -127,7 +127,7 @@ descartar ayudó o estorbó y si el demo se parece al backtest (+0,1 a +0,2 R po
 **teórico**: usa los niveles del aviso, no las órdenes reales de tu cuenta, y con menos de 30 operaciones cerradas
 no permite juzgar la estrategia.
 
-## Interfaz gráfica (entrega 1)
+## Interfaz gráfica (entregas 1 y 2)
 
 ```powershell
 pip install -e .[ui]
@@ -135,7 +135,7 @@ py -m forexplat ui --profile demo
 ```
 
 Se abre en el navegador (`http://127.0.0.1:8501`), solo accesible desde tu propio PC. Deja la ventana de PowerShell
-abierta mientras la uses; Ctrl+C la cierra. Con MetaTrader 5 abierto, tiene cuatro pestañas:
+abierta mientras la uses; Ctrl+C la cierra. Con MetaTrader 5 abierto, tiene siete pestañas:
 
 - **Inicio:** estado de MetaTrader 5 (cuenta, saldo), de Telegram y de la vigilancia. En el perfil real aparece un
   aviso rojo permanente. Pulsa «Actualizar estado» para consultar.
@@ -147,9 +147,26 @@ abierta mientras la uses; Ctrl+C la cierra. Con MetaTrader 5 abierto, tiene cuat
 - **Vigilancia:** inicia y detiene `watch` como proceso aparte, que sigue vivo aunque cierres la pestaña (pero no si
   apagas el PC), con su registro en `logs/watch_<perfil>.log`. Desde la interfaz solo se inicia en demo.
 
+- **Diario:** tabla de alertas con tu decisión (tomada / descartada), una nota libre, el resultado teórico
+  («Calcular resultados» usa velas de MetaTrader 5) y el resumen por decisión. «Buscar en el historial de
+  MetaTrader 5» rellena precio, lote, resultado y ticket de la operación que abriste tras la alerta (mismo par y
+  dirección, hasta 7 días después); revísalos antes de guardar. Es una búsqueda aproximada: si no acierta, escribe
+  los datos a mano. La decisión se guarda en `journal/decisiones_<perfil>.csv`; si ya la tomaste en la
+  interfaz, el botón de Telegram avisa de que ya está registrada (y al revés).
+- **Estrategias:** formularios para indicadores, periodos, niveles, stop loss, take profit y confirmaciones
+  mínimas, validados con las mismas reglas que la consola. Antes de guardar se copia la versión anterior en
+  `config/backups/`. Se puede duplicar una estrategia. Si la usa el perfil real hay que escribir `REAL`.
+  Al guardar se conserva el encabezado de `strategies.yaml`, pero los comentarios internos de cada estrategia se
+  sustituyen por su descripción.
+- **Perfil y riesgo:** pares, temporalidad, riesgo por operación, spread máximo, relación mínima beneficio/riesgo,
+  estrategias activas y backtest. Se rechaza una combinación que descartaría todas las señales de una estrategia.
+  El perfil real también exige escribir `REAL`.
+
+Los cambios de estrategia o perfil no afectan a una vigilancia ya iniciada: deténla y vuelve a iniciarla.
+
 Para el perfil real: `py -m forexplat ui --profile real --i-understand-real-account` (pide escribir `REAL`).
-Los secretos (`.env.*`) nunca se muestran. La interfaz no envía órdenes ni cambia estrategias: la edición de
-estrategias y perfil y el diario llegan en la entrega 2. La consola sigue funcionando igual.
+Los secretos (`.env.*`) nunca se muestran. La interfaz no envía órdenes a MetaTrader 5 (solo lee cuenta, velas y
+historial). La consola sigue funcionando igual.
 
 ## Perfiles demo y real
 
@@ -176,7 +193,7 @@ config/            demo.yaml, real.yaml (perfiles) y strategies.yaml (estrategia
 src/forexplat/
   config.py        carga y validación de perfiles
   safety.py        comprobación de tipo de cuenta
-  mt5_client.py    conector con MT5 (cuenta, símbolos, velas, precio, margen)
+  mt5_client.py    conector con MT5 (cuenta, símbolos, velas, precio, margen, historial)
   indicators.py    SMA, EMA, RSI, ATR, MACD, Bollinger, estocástico, Fibonacci
   rules.py         reglas combinables (cruce, RSI, MACD, ...)
   strategy.py      disparador + confirmaciones desde strategies.yaml
@@ -187,8 +204,10 @@ src/forexplat/
   telegram.py      cliente de la API de Telegram
   watch.py         vigilancia, avisos sin repetir y diario de decisiones
   review.py        revisión de las alertas enviadas
+  journal.py       diario de decisiones (CSV compartido, escritura atómica)
+  history.py       empareja una alerta con la operación real del historial de MT5
   safeio.py        escritura atómica y bloqueo de archivos compartidos
-  ui/              interfaz gráfica (Streamlit): app.py dibuja; services.py y watchproc.py tienen la lógica
+  ui/              interfaz gráfica (Streamlit): app.py dibuja; services.py, configio.py, forms.py y watchproc.py tienen la lógica
   data.py          velas en CSV
   cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch`, `review` y `ui`
 tests/             pruebas (no necesitan MT5)
