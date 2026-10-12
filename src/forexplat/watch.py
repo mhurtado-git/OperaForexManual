@@ -6,23 +6,20 @@ No se envía ninguna orden a MetaTrader 5.
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import journal as journal_store
 from .alerts import format_scan
 from .config import Profile
-from .safeio import atomic_write_text, file_lock
+from .safeio import atomic_write_text
 from .scanner import scan
 from .telegram import TelegramError
 
 MAX_SEEN = 1000
-JOURNAL_COLUMNS = [
-    "decided_at", "alert_id", "strategy", "symbol", "timeframe", "direction",
-    "candle_time", "entry", "sl", "tp", "lots", "decision",
-]
+JOURNAL_COLUMNS = journal_store.COLUMNS
 DECISIONS = {"tomada": "tomada", "descartada": "descartada"}
 
 
@@ -98,14 +95,7 @@ def run_cycle(mt5, tg, profile: Profile, strategies, symbols, state: State) -> l
 
 
 def _append_journal(path: Path, row: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with file_lock(path):
-        is_new = not path.exists()
-        with path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=JOURNAL_COLUMNS)
-            if is_new:
-                writer.writeheader()
-            writer.writerow(row)
+    journal_store.upsert(path, row)
 
 
 def handle_updates(tg, state: State, journal: Path, timeout: int = 0) -> list[str]:
@@ -126,8 +116,10 @@ def handle_updates(tg, state: State, journal: Path, timeout: int = 0) -> list[st
         if action not in DECISIONS or info is None:
             tg.answer_callback(query["id"], "Alerta desconocida")
             continue
-        if info.get("decision"):
-            tg.answer_callback(query["id"], f"Ya la registraste como {info['decision']}")
+        already = info.get("decision") or journal_store.decision_of(journal, identifier)
+        if already:
+            info["decision"] = already  # puede haberse decidido en la interfaz
+            tg.answer_callback(query["id"], f"Ya la registraste como {already}")
             continue
 
         info["decision"] = DECISIONS[action]

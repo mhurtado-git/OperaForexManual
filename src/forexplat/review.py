@@ -7,13 +7,13 @@ reales de tu cuenta.
 
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from . import journal as journal_store
 from .backtest import _simulate
 from .risk import LONG
 
@@ -31,18 +31,18 @@ def load_alerts(root: Path, mode: str) -> list[dict]:
                 alerts[key] = {**info, "alert_id": key}
         except ValueError:
             pass
-    journal = root / "journal" / f"decisiones_{mode}.csv"
-    if journal.exists():
-        with journal.open(encoding="utf-8", newline="") as handle:
-            for row in csv.DictReader(handle):
-                base = alerts.get(row["alert_id"], {})
-                alerts[row["alert_id"]] = {
-                    **base,
-                    **{key: row[key] for key in ("strategy", "symbol", "timeframe", "direction", "candle_time")},
-                    **{key: float(row[key]) for key in ("entry", "sl", "tp", "lots")},
-                    "alert_id": row["alert_id"],
-                    "decision": row["decision"],
-                }
+    for row in journal_store.load(root / "journal" / f"decisiones_{mode}.csv"):
+        base = alerts.get(row["alert_id"], {})
+        merged = {**base, "alert_id": row["alert_id"], "decision": row["decision"] or None}
+        for key in ("strategy", "symbol", "timeframe", "direction", "candle_time"):
+            if row[key]:
+                merged[key] = row[key]
+        for key in ("entry", "sl", "tp", "lots"):
+            if row[key] != "":
+                merged[key] = float(row[key])
+        for key in ("note", "real_entry", "real_lots", "real_result", "ticket"):
+            merged[key] = row[key]
+        alerts[row["alert_id"]] = merged
     return sorted(alerts.values(), key=lambda a: a["candle_time"])
 
 
@@ -134,3 +134,19 @@ def format_review(rows: list[dict], mode: str) -> str:
             "(hacen falta 40 o 50). Backtest de referencia: +0,1 a +0,2 R por operación."
         )
     return "\n".join(lines)
+
+
+def review_rows(client, alerts: list[dict]) -> list[dict]:
+    """Resultado teórico de cada alerta con las velas de MetaTrader 5 (una descarga por par y temporalidad)."""
+    from .risk import SymbolSpec
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for alert in alerts:
+        groups.setdefault((alert["symbol"], alert["timeframe"]), []).append(alert)
+    rows = []
+    for (symbol, timeframe), group in groups.items():
+        spec = SymbolSpec.from_summary(client.symbol_summary(symbol))
+        candles = client.get_candles(symbol, timeframe, bars_needed(group))
+        spread = spec.spread_points * spec.point
+        rows += [{**alert, **evaluate_alert(alert, candles, spread)} for alert in group]
+    return sorted(rows, key=lambda row: row["candle_time"])

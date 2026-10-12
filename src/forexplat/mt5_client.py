@@ -150,6 +150,23 @@ class Mt5Client:
             frame = frame.iloc[:-1]
         return frame.reset_index(drop=True)
 
+    def get_deals(self, date_from, date_to) -> pd.DataFrame:
+        """Transacciones del historial de la cuenta entre dos fechas (datetime con zona UTC).
+
+        Columnas: time, position_id, symbol, type (0 compra, 1 venta), entry (0 entrada, 1 salida),
+        volume, price, profit, commission, swap. La hora es la del servidor del broker, igual que en las velas.
+        """
+        self._require_account()
+        deals = mt5.history_deals_get(date_from, date_to)
+        if deals is None:
+            raise Mt5Error(f"No se pudo leer el historial de operaciones: {mt5.last_error()}")
+        columns = ["time", "position_id", "symbol", "type", "entry", "volume", "price", "profit", "commission", "swap"]
+        if len(deals) == 0:
+            return pd.DataFrame(columns=columns)
+        frame = pd.DataFrame(list(deals), columns=deals[0]._asdict().keys())
+        frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+        return frame[columns].reset_index(drop=True)
+
     # --- internos ------------------------------------------------------
 
     def _require_account(self):

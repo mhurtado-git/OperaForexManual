@@ -19,3 +19,6 @@ reports/
 
 state/
 journal/
+
+# Copias de seguridad que crea la interfaz al guardar configuración
+config/backups/

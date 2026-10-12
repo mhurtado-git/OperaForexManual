@@ -17,6 +17,7 @@ class FakeClient:
                         "currency": "USD", "leverage": 100, "margin_free": margin_free}
         self.margin = margin
         self.margin_calls = []
+        self.deals = None
 
     def account_summary(self):
         return dict(self.account)
@@ -29,6 +30,10 @@ class FakeClient:
 
     def get_tick(self, symbol):
         return dict(self.tick)
+
+    def get_deals(self, date_from, date_to):
+        self.deals_range = (date_from, date_to)
+        return self.deals
 
     def margin_required(self, symbol, direction, lots, price):
         self.margin_calls.append((direction, lots, price))
