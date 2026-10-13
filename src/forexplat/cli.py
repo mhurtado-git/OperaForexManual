@@ -82,6 +82,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     check_time.add_argument("--symbol", help="Símbolo de prueba. Por defecto, el primero del perfil")
     check_time.add_argument("--bars", type=int, default=9000, help="Velas H1 a revisar (9000 ~ 1 año)")
 
+    optimize = sub.add_parser(
+        "optimize", help="Busca estrategias (M5) con validación fuera de muestra y escribe un informe"
+    )
+    _add_profile_args(optimize)
+    optimize.add_argument("--symbol", action="append", help="Par a evaluar (repetible). Por defecto, 6 pares habituales")
+    optimize.add_argument("--bars", type=int, default=100000, help="Velas M5 a descargar por par (máx. lo que dé MT5)")
+    optimize.add_argument("--spread-pips", type=float, help="Spread fijo para todos los pares (si no, se mide en MT5)")
+    optimize.add_argument("--slack-pips", type=float, default=0.3, help="Holgura que se suma al spread medido")
+    optimize.add_argument("--risk-per-trade", type=float, default=0.0025, help="Riesgo por operación sugerido")
+    optimize.add_argument("--alpha", type=float, default=0.05, help="Nivel de significancia (se corrige por finalistas)")
+    optimize.add_argument("--no-session", action="store_true", help="No probar el filtro de sesión (no exige broker_time)")
+    optimize.add_argument("--use-saved", action="store_true", help="Usa las velas de data/ en lugar de descargarlas")
+    optimize.add_argument("--out", default="reports", help="Carpeta del informe")
+    optimize.add_argument("--write", action="store_true", help="Escribe las estrategias ganadoras en strategies.yaml")
+
     _add_profile_args(sub.add_parser("review", help="Revisa cómo terminaron las alertas enviadas y tus decisiones"))
 
     ui = sub.add_parser("ui", help="Abre la interfaz gráfica en el navegador (solo en este PC)")
@@ -340,6 +355,100 @@ def _cmd_check_time(args: argparse.Namespace, root: Path) -> None:
             print(line)
 
 
+DEFAULT_OPT_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY"]
+
+
+def _cmd_optimize(args: argparse.Namespace, root: Path) -> None:
+    from .config import RiskConfig
+    from .data import guess_pip_size, load_candles_csv, save_csv
+    from .optimize import (
+        SESSIONS, Criteria, combos_table, evaluate_symbol, finalize, pick_winners,
+        render_report, winner_name,
+    )
+    from .risk import SymbolSpec
+
+    _confirm_real(args)
+    profile = load_profile(args.profile, root, require_credentials=not args.use_saved)
+    if profile.broker_time is None and not args.no_session:
+        raise ValueError(
+            "Para probar el filtro de sesión hace falta `broker_time` en el perfil. Ejecuta "
+            "`py -m forexplat check-time` y agrega la línea que sugiere (o usa --no-session)."
+        )
+    sessions = ["sin_filtro"] if args.no_session else list(SESSIONS)
+    symbols = args.symbol or DEFAULT_OPT_SYMBOLS
+    risk = RiskConfig(
+        risk_per_trade=args.risk_per_trade, max_daily_loss=0.03, min_reward_risk=1.5,
+        max_spread_pips=max(profile.risk.max_spread_pips, 2.0),
+    )
+    criteria = Criteria(alpha=args.alpha)
+    reports, notes = [], []
+    print(f"Pares: {', '.join(symbols)} | sesiones: {', '.join(sessions)}. Puede tardar varios minutos por par.")
+
+    def run_symbol(symbol, candles, pip_size, spread):
+        report = evaluate_symbol(
+            symbol, candles, pip_size, spread, risk, criteria, sessions=sessions,
+            times_are_utc=profile.broker_time is not None or args.no_session, log=print,
+        )
+        reports.append(report)
+
+    def candles_path(symbol):
+        return root / "data" / f"velas_{re.sub(r'[^A-Za-z0-9_.-]', '_', symbol)}_M5.csv"
+
+    if args.use_saved:
+        for symbol in symbols:
+            path = candles_path(symbol)
+            if not path.exists():
+                notes.append(f"{symbol}: no hay {path.name} en data/ (se omite)")
+                continue
+            spread = (args.spread_pips if args.spread_pips is not None else profile.backtest.spread_pips)
+            run_symbol(symbol, load_candles_csv(path), guess_pip_size(symbol), spread)
+    else:
+        with _mt5_client_class()(profile) as client:
+            for symbol in symbols:
+                try:
+                    spec = SymbolSpec.from_summary(client.symbol_summary(symbol))
+                    measured = spec.spread_points * spec.point / spec.pip_size
+                    spread = (args.spread_pips if args.spread_pips is not None else measured + args.slack_pips)
+                    candles = client.get_candles(symbol, "M5", args.bars)
+                except RuntimeError as error:
+                    notes.append(f"{symbol}: {error} (se omite)")
+                    continue
+                print(f"{symbol}: {len(candles)} velas M5, spread usado {spread:.2f} pips")
+                save_csv(candles, candles_path(symbol))
+                run_symbol(symbol, candles, spec.pip_size, spread)
+
+    if not reports:
+        raise ValueError("No se pudo evaluar ningún par. " + "; ".join(notes))
+    need = finalize(reports, criteria)
+    winners = pick_winners(reports)
+    text = render_report(reports, winners, criteria, extra_notes=notes)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / "informe_m5.md"
+    report_path.write_text(text, encoding="utf-8")
+    save_csv(combos_table(reports), out_dir / "optimize_m5_finalistas.csv")
+    print(f"\nInforme: {report_path}  (t exigido en la validación: {need:.2f})")
+    if not winners:
+        print("RESULTADO: ninguna candidata demostró ventaja fuera de muestra. No se escribió nada.")
+        return
+    for winner in winners:
+        v = winner.combo.valid
+        print(f"GANADORA: {winner_name(winner)} ({winner.symbol}) validación: {v['n']} ops, R medio {v['avg_r']:+.2f}, t {v['t']:.2f}")
+    if not args.write:
+        print("Para guardarlas en config/strategies.yaml agrega --write.")
+        return
+    from .ui import configio
+
+    for winner in winners:
+        backup = configio.save_strategy(root, winner_name(winner), winner.strategy_data)
+        print(f"Guardada {winner_name(winner)}" + (f" (copia previa: {backup.name})" if backup else ""))
+    names = [winner_name(w) for w in winners]
+    print("\nPara usarlas, en config/demo.yaml pon:")
+    print(f"  symbols: {sorted({w.symbol for w in winners})}\n  timeframe: M5\n  strategies: {names}")
+    print(f"  risk: risk_per_trade: {args.risk_per_trade}, min_reward_risk: 1.5")
+    print("(cada estrategia solo se evalúa en su par). Detén y reinicia la vigilancia después de cambiarlo.")
+
+
 def _cmd_review(args: argparse.Namespace, root: Path) -> None:
     from .review import format_review, load_alerts, review_rows
 
@@ -380,6 +489,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             _cmd_telegram_test(args, root)
         elif args.command == "ui":
             _cmd_ui(args, root)
+        elif args.command == "optimize":
+            _cmd_optimize(args, root)
         elif args.command == "check-time":
             _cmd_check_time(args, root)
         elif args.command == "review":
