@@ -14,6 +14,8 @@ import yaml
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
+from .timeutil import BrokerTime
+
 ROOT = Path(__file__).resolve().parents[2]
 VALID_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D1")
 
@@ -66,6 +68,8 @@ class Profile(BaseModel):
     strategies: list[str] = Field(default_factory=lambda: ["ema_rsi_atr"], min_length=1)
     risk: RiskConfig
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+    # Hora del servidor del broker; sin ella las velas se tratan como UTC y no se puede usar session_filter.
+    broker_time: BrokerTime | None = None
     # None cuando el perfil se carga sin credenciales (por ejemplo, backtest con un archivo CSV).
     mt5: Mt5Credentials | None = None
     # None cuando .env.<perfil> no trae TELEGRAM_BOT_TOKEN.

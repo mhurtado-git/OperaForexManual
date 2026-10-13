@@ -144,8 +144,7 @@ class Mt5Client:
             raise Mt5Error(f"Sin velas para {symbol} {timeframe}: {mt5.last_error()}")
 
         frame = pd.DataFrame(rates)
-        # MT5 entrega la hora del servidor del broker; se marca como UTC solo para ordenar.
-        frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+        frame["time"] = self._to_utc(pd.to_datetime(frame["time"], unit="s", utc=True))
         if closed_only:
             frame = frame.iloc[:-1]
         return frame.reset_index(drop=True)
@@ -164,10 +163,31 @@ class Mt5Client:
         if len(deals) == 0:
             return pd.DataFrame(columns=columns)
         frame = pd.DataFrame(list(deals), columns=deals[0]._asdict().keys())
-        frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
+        frame["time"] = self._to_utc(pd.to_datetime(frame["time"], unit="s", utc=True))
         return frame[columns].reset_index(drop=True)
 
+    def server_time_offset_hours(self, symbol: str) -> tuple[float, float]:
+        """Estima el desfase del servidor respecto a UTC con el último tick del símbolo.
+
+        Devuelve (desfase en horas redondeado a 0.5, segundos de diferencia sin redondear). Solo es fiable
+        con el mercado abierto: un tick viejo (fin de semana) falsea el resultado.
+        """
+        import time
+
+        self._require_account()
+        self._select_symbol(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            raise Mt5Error(f"Sin precio actual para {symbol}: {mt5.last_error()}")
+        raw = tick.time - time.time()
+        return round(raw / 1800) / 2, raw
+
     # --- internos ------------------------------------------------------
+
+    def _to_utc(self, times: pd.Series) -> pd.Series:
+        """Hora del servidor -> UTC si el perfil declara `broker_time`; si no, se deja como llega."""
+        broker_time = self._profile.broker_time
+        return times if broker_time is None else broker_time.to_utc(times)
 
     def _require_account(self):
         if self._account is None:
