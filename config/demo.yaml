@@ -1,11 +1,11 @@
 # Perfil DEMO. Las credenciales van en .env.demo (no aquí).
 mode: demo
 
-symbols: [EURUSD]   # usa el nombre exacto que muestra tu broker (p. ej. EURUSD.m)
-timeframe: H1       # M1, M5, M15, M30, H1, H4, D1
+symbols: [EURUSD, GBPUSD]   # usa el nombre exacto que muestra tu broker (p. ej. EURUSD.m)
+timeframe: H4       # M1, M5, M15, M30, H1, H4, D1
 bars: 200           # velas cerradas que se leen en cada ciclo
 
-strategies: [ema_rsi_atr]   # nombres definidos en config/strategies.yaml
+strategies: [bb_breakout_macd]   # nombres definidos en config/strategies.yaml
 
 backtest:
   bars: 5000              # velas históricas que se descargan de MT5
