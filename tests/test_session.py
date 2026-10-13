@@ -260,3 +260,29 @@ def test_cli_parses_check_time():
 
     args = cli._parse_args(["check-time", "--bars", "5000"])
     assert args.command == "check-time" and args.bars == 5000 and args.profile == "demo"
+
+
+# --- estrategia limitada a ciertos símbolos -----------------------------------------
+
+def test_strategy_symbols_filter_applies_in_watch_and_survives_saving(tmp_path):
+    from forexplat.watch import State, run_cycle
+    from fake_telegram import FakeTelegram
+    from test_scanner import LONG_CANDLES, PROFILE
+
+    only_gbp = Strategy("s", StrategyConfig.model_validate({
+        "symbols": ["GBPUSD"], "trigger": "cruce",
+        "rules": [{"type": "ma_cross", "name": "cruce", "fast": 3, "slow": 5}],
+        "stop_loss": {"mode": "fixed_pips", "pips": 20}, "take_profit": {"mode": "rr", "reward_risk": 2.0},
+    }))
+    assert only_gbp.applies_to("GBPUSD") and not only_gbp.applies_to("EURUSD")
+    tg = FakeTelegram()
+    assert run_cycle(FakeClient(LONG_CANDLES), tg, PROFILE, [only_gbp], ["EURUSD"], State(tmp_path / "s.json")) == []
+    assert tg.sent == []
+    assert len(run_cycle(FakeClient(LONG_CANDLES), tg, PROFILE, [only_gbp], ["GBPUSD"], State(tmp_path / "s2.json"))) == 1
+
+    from forexplat.ui import configio
+    from test_cli import make_root
+    root = make_root(tmp_path / "r")
+    data = {**configio.read_strategy_dicts(root)["bb_breakout_macd"], "symbols": ["EURUSD"]}
+    configio.save_strategy(root, "bb_breakout_macd", data)
+    assert configio.read_strategy_dicts(root)["bb_breakout_macd"]["symbols"] == ["EURUSD"]

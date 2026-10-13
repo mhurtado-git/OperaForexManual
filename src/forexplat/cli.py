@@ -161,6 +161,8 @@ def _cmd_signals(args: argparse.Namespace, root: Path) -> None:
     with Mt5Client(profile) as client:
         for strategy in strategies:
             for symbol in symbols:
+                if not strategy.applies_to(symbol):
+                    continue
                 result = scan(client, profile, strategy, symbol)
                 print(format_scan(result, profile.mode.value))
                 print()

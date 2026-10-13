@@ -65,6 +65,8 @@ def run_cycle(mt5, tg, profile: Profile, strategies, symbols, state: State) -> l
     events: list[str] = []
     for strategy in strategies:
         for symbol in symbols:
+            if not strategy.applies_to(symbol):
+                continue
             result = scan(mt5, profile, strategy, symbol)
             if result.signal is None:
                 continue

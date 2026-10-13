@@ -20,6 +20,8 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 class StrategyConfig(StrictModel):
     description: str = ""
+    # Si se indica, la estrategia solo se aplica a estos símbolos (por ejemplo, una optimizada para un par).
+    symbols: list[str] | None = Field(default=None, min_length=1)
     trigger: str
     rules: list[Rule] = Field(min_length=1)
     min_confirmations: int | None = Field(default=None, ge=0)
@@ -101,6 +103,9 @@ class Strategy:
     def __init__(self, name: str, config: StrategyConfig) -> None:
         self.name = name
         self.config = config
+
+    def applies_to(self, symbol: str) -> bool:
+        return self.config.symbols is None or symbol in self.config.symbols
 
     @property
     def warmup_bars(self) -> int:

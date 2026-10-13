@@ -108,6 +108,8 @@ def run_signals(profile_name: str, root: Path, strategy_names=None, symbols=None
     with _client_class(client_class)(profile) as client:
         for strategy in strategies:
             for symbol in symbols or profile.symbols:
+                if not strategy.applies_to(symbol):
+                    continue
                 results.append(scan(client, profile, strategy, symbol))
     return profile, results
 

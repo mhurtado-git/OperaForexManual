@@ -117,6 +117,8 @@ def _strategies_text(header: str, strategies: dict[str, dict]) -> str:
         out.append(f"\n  {name}:\n")
         if cfg.get("description"):
             out.append(f"    description: {_scalar(cfg['description'])}\n")
+        if cfg.get("symbols"):
+            out.append(f"    symbols: {_scalar(cfg['symbols'])}\n")
         out.append(f"    trigger: {_scalar(cfg['trigger'])}\n")
         out.append("    rules:\n")
         for rule in cfg["rules"]:
