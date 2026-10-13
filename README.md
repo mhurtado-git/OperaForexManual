@@ -168,6 +168,76 @@ Para el perfil real: `py -m forexplat ui --profile real --i-understand-real-acco
 Los secretos (`.env.*`) nunca se muestran. La interfaz no envía órdenes a MetaTrader 5 (solo lee cuenta, velas y
 historial). La consola sigue funcionando igual.
 
+## Filtro de sesión (Nueva York) y velas M5
+
+MetaTrader 5 entrega las velas en la hora del **servidor** del broker, no en UTC. Para filtrar por sesión hay
+que decirle al programa cómo convertirla. Es un paso obligatorio: sin él, `session_filter` se niega a funcionar
+(en vez de filtrar a la hora equivocada sin avisar).
+
+1. Con MT5 abierto: `py -m forexplat check-time`. Mide el desfase con el último precio (solo fiable con el
+   mercado abierto) y lo comprueba con el **cierre semanal**: el mercado cierra cada viernes a las 17:00 de
+   Nueva York todo el año, así que, si la conversión es correcta, la última vela de cada semana termina a esa
+   hora. Usa ~1 año de velas H1 para cubrir los dos cambios de horario de EE. UU. y sugiere la línea a copiar.
+2. Agrégala a `config/demo.yaml` (y a `real.yaml`). Hay tres formas, exactamente una:
+
+   ```yaml
+   broker_time: {ny_offset_hours: 7}      # servidor = hora de Nueva York + 7 h (GMT+2 invierno / GMT+3 verano)
+   # broker_time: {utc_offset_hours: 3}   # servidor fijo en UTC+3
+   # broker_time: {timezone: Europe/Athens}  # servidor que sigue una zona con su horario de verano
+   ```
+3. Vuelve a ejecutar `check-time`: debe decir «bien configurada». En Windows, si falla una zona horaria:
+   `py -m pip install tzdata` (ya es dependencia al reinstalar con `pip install -e .`).
+
+Con `broker_time`, las velas descargadas (y las que guarda `backtest --save-candles` o `optimize`) quedan en
+**UTC real**. Los CSV guardados antes de configurarlo están en hora del servidor: vuelve a descargarlos.
+
+La regla `session_filter` (en `strategies.yaml`, también editable en la pestaña Estrategias) es una
+**compuerta**: se exige siempre, aunque `min_confirmations` sea menor, y no cuenta como confirmación.
+
+```yaml
+- {type: session_filter, name: sesion_ny, timezone: America/New_York, start: "08:00", end: "17:00",
+   days: [0, 1, 2, 3, 4], no_new_minutes: 30}
+```
+
+- La hora que cuenta es la de la **entrada** (el cierre de la vela de la señal), en la zona indicada y con su
+  cambio de horario de verano. Con los valores de arriba, entradas desde las 08:00 hasta antes de las 16:30.
+- Las operaciones abiertas siguen hasta su SL/TP aunque termine la sesión.
+- En Bogotá la sesión de 08:00-17:00 de Nueva York son 07:00-16:00 mientras EE. UU. tiene horario de verano
+  y 08:00-17:00 el resto del año.
+- Una estrategia puede limitarse a ciertos pares con `symbols: [EURUSD]`; el resto de pares la ignoran.
+
+### Buscar estrategias M5: `optimize`
+
+```powershell
+py -m forexplat optimize --symbol EURUSD --symbol GBPUSD --symbol USDJPY      # solo informe
+py -m forexplat optimize --write                                               # además guarda las ganadoras
+py -m forexplat optimize --use-saved --symbol EURUSD                           # reutiliza data/velas_<par>_M5.csv
+```
+
+Descarga las velas M5 de cada par (hasta `--bars`, por defecto 100000; MT5 puede dar menos, el informe dice
+cuántos días son), mide el spread (más 0.3 pips de holgura) y descarta los pares donde supera el 15 % del
+ATR medio. Prueba tres familias (ruptura de Bollinger + MACD, giro del RSI a favor de la tendencia, cruce de
+EMAs + RSI), cada una con una rejilla pequeña de parámetros y las cuatro variantes de sesión (sin filtro,
+08:00-17:00, 08:00-12:00 y 09:30-16:00 de Nueva York). Tarda unos minutos por par.
+
+Cómo evita engañarse:
+
+- Cada combinación se simula una vez; el 70 % antiguo es el **ajuste** y el 30 % reciente la **validación**.
+- La elección se hace solo con el ajuste y premia las zonas estables (la nota promedia cada combinación con
+  sus vecinas de un paso). La validación solo confirma o rechaza a las finalistas (una por par y familia).
+- Criterios fijos: operaciones mínimas (100 en el ajuste, 30 en la validación), expectativa mayor que +0.10 R,
+  factor de beneficio mayor que 1.2, positiva en 2 de 3 ventanas consecutivas de la validación, positiva con el
+  spread multiplicado por 1.5, estable ante cambios de un paso y **estadísticamente significativa** (t mínimo con
+  corrección de Bonferroni por el número de finalistas). Esta última existe porque, con ruido puro, sin ella
+  alrededor de una de cada seis finalistas cumplía el resto de criterios por pura suerte.
+- Cuenta todas las combinaciones probadas y lo escribe en el informe.
+
+Entrega `reports/informe_m5.md` (con señales por hora de Bogotá, resultado con y sin filtro de sesión y
+riesgos) y `reports/optimize_m5_finalistas.csv`. Si ninguna candidata cumple, lo dice y no escribe nada.
+Con `--write` guarda las ganadoras (con copia de seguridad) en `strategies.yaml` y muestra qué poner en
+`demo.yaml` (`timeframe: M5`, los pares y los nombres de las estrategias). Ni `optimize` ni nada de esto envía
+órdenes. Los resultados históricos no garantizan resultados futuros.
+
 ## Perfiles demo y real
 
 | | Demo | Real |
@@ -204,12 +274,15 @@ src/forexplat/
   telegram.py      cliente de la API de Telegram
   watch.py         vigilancia, avisos sin repetir y diario de decisiones
   review.py        revisión de las alertas enviadas
+  timeutil.py      hora del servidor del broker y zonas horarias
+  timecheck.py     comando `check-time`
+  optimize.py      búsqueda de estrategias con validación fuera de muestra
   journal.py       diario de decisiones (CSV compartido, escritura atómica)
   history.py       empareja una alerta con la operación real del historial de MT5
   safeio.py        escritura atómica y bloqueo de archivos compartidos
   ui/              interfaz gráfica (Streamlit): app.py dibuja; services.py, configio.py, forms.py y watchproc.py tienen la lógica
   data.py          velas en CSV
-  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch`, `review` y `ui`
+  cli.py           comandos `check`, `signals`, `backtest`, `telegram-setup`, `telegram-test`, `watch`, `review`, `check-time`, `optimize` y `ui`
 tests/             pruebas (no necesitan MT5)
 ```
 
