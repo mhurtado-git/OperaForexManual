@@ -42,7 +42,7 @@ class StrategyConfig(StrictModel):
                 f"El disparador '{self.trigger}' debe ser un evento (por ejemplo ma_cross con "
                 "mode: event, o rsi con mode: reversal), no un estado"
             )
-        confirmations = len(self.rules) - 1
+        confirmations = sum(1 for rule in self.rules if not getattr(rule, "is_gate", False)) - 1
         if self.min_confirmations is not None and self.min_confirmations > confirmations:
             raise ValueError(
                 f"min_confirmations ({self.min_confirmations}) supera las reglas de confirmación "
@@ -76,16 +76,21 @@ class RuleState:
 
 
 def combine(
-    outputs: dict[str, RuleOutput], trigger: str, min_confirmations: int | None, index: pd.Index
+    outputs: dict[str, RuleOutput], trigger: str, min_confirmations: int | None, index: pd.Index,
+    gates: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[pd.Series, pd.Series]:
-    """Señal = el disparador ocurre y suficientes reglas de confirmación coinciden."""
+    """Señal = el disparador ocurre, suficientes reglas de confirmación coinciden y todas las
+    compuertas (por ejemplo el filtro de sesión) se cumplen. Las compuertas no cuentan como votos."""
     trigger_out = outputs[trigger]
-    others = [out for name, out in outputs.items() if name != trigger]
+    others = [out for name, out in outputs.items() if name != trigger and name not in gates]
     needed = len(others) if min_confirmations is None else min_confirmations
 
     def side(attr: str) -> pd.Series:
         votes = sum((getattr(out, attr).astype(int) for out in others), start=pd.Series(0, index=index))
-        return getattr(trigger_out, attr) & (votes >= needed)
+        passed = getattr(trigger_out, attr) & (votes >= needed)
+        for name in gates:
+            passed = passed & getattr(outputs[name], attr)
+        return passed
 
     long, short = side("long"), side("short")
     both = long & short  # señales contradictorias: se descartan
@@ -112,7 +117,8 @@ class Strategy:
 
     def evaluate(self, df: pd.DataFrame, ctx: Context) -> Evaluation:
         outputs = {rule.rule_name: rule.evaluate(df, ctx) for rule in self.config.rules}
-        long, short = combine(outputs, self.config.trigger, self.config.min_confirmations, df.index)
+        gates = {rule.rule_name for rule in self.config.rules if getattr(rule, "is_gate", False)}
+        long, short = combine(outputs, self.config.trigger, self.config.min_confirmations, df.index, gates)
         return Evaluation(long, short, outputs)
 
     def signal_at(self, evaluation: Evaluation, df: pd.DataFrame, i: int) -> Signal | None:

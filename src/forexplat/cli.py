@@ -75,6 +75,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     ):
         _add_profile_args(sub.add_parser(name, help=text))
 
+    check_time = sub.add_parser(
+        "check-time", help="Comprueba la hora del servidor del broker (necesaria para el filtro de sesión)"
+    )
+    _add_profile_args(check_time)
+    check_time.add_argument("--symbol", help="Símbolo de prueba. Por defecto, el primero del perfil")
+    check_time.add_argument("--bars", type=int, default=9000, help="Velas H1 a revisar (9000 ~ 1 año)")
+
     _add_profile_args(sub.add_parser("review", help="Revisa cómo terminaron las alertas enviadas y tus decisiones"))
 
     ui = sub.add_parser("ui", help="Abre la interfaz gráfica en el navegador (solo en este PC)")
@@ -195,7 +202,8 @@ def _cmd_backtest(args: argparse.Namespace, root: Path) -> None:
         )
 
     result = run_backtest(
-        candles, strategy, Context(pip_size), profile.risk, spread_pips, initial_balance
+        candles, strategy, Context(pip_size, profile.broker_time is not None), profile.risk, spread_pips,
+        initial_balance,
     )
     print(
         format_backtest(
@@ -319,6 +327,17 @@ def _cmd_ui(args: argparse.Namespace, root: Path) -> None:
     subprocess.run(command, env={**os.environ, "FOREXPLAT_ROOT": str(root)}, check=False)
 
 
+def _cmd_check_time(args: argparse.Namespace, root: Path) -> None:
+    from .timecheck import check_time_report
+
+    _confirm_real(args)
+    profile = load_profile(args.profile, root)
+    symbol = args.symbol or profile.symbols[0]
+    with _mt5_client_class()(profile) as client:
+        for line in check_time_report(client, profile, symbol, args.bars):
+            print(line)
+
+
 def _cmd_review(args: argparse.Namespace, root: Path) -> None:
     from .review import format_review, load_alerts, review_rows
 
@@ -359,6 +378,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             _cmd_telegram_test(args, root)
         elif args.command == "ui":
             _cmd_ui(args, root)
+        elif args.command == "check-time":
+            _cmd_check_time(args, root)
         elif args.command == "review":
             _cmd_review(args, root)
         elif args.command == "watch":

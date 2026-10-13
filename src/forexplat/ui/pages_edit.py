@@ -10,7 +10,7 @@ from forexplat.config import VALID_TIMEFRAMES, BacktestConfig, RiskConfig
 from forexplat.review import format_review
 from forexplat.risk import StopLossConfig, TakeProfitConfig
 from forexplat.ui import configio, services
-from forexplat.ui.forms import FieldSpec, fields_for
+from forexplat.ui.forms import WEEKDAYS, FieldSpec, fields_for
 
 
 def _state(key: str, default=None):
@@ -34,6 +34,12 @@ def render_field(spec: FieldSpec, value, key: str):
     if spec.kind == "choice":
         options = list(spec.options)
         return st.selectbox(label, options, index=options.index(value) if value in options else 0, key=key)
+    if spec.kind == "days":
+        chosen = st.multiselect(
+            label, list(spec.options), default=[d for d in (value or []) if d in spec.options],
+            format_func=lambda d: WEEKDAYS[d], key=key,
+        )
+        return sorted(chosen)
     if spec.kind in ("int", "opt_int"):
         if spec.kind == "opt_int" and not st.checkbox(f"{label}: usar", value=value is not None, key=key + ":on"):
             return None
@@ -122,6 +128,7 @@ def strategies_tab(profile_name: str, root: Path) -> None:
         "Regla que dispara la señal (debe ser un evento: cruce, ruptura, giro)", rule_names,
         index=rule_names.index(trigger) if trigger in rule_names else 0, key=f"{prefix}:trigger",
     )
+    confirmable = max(sum(1 for r in rules if r["type"] != "session_filter") - 1, 0)
     all_needed = st.checkbox(
         "Exigir todas las confirmaciones", value=draft.get("min_confirmations") is None, key=f"{prefix}:all"
     )
@@ -130,8 +137,8 @@ def strategies_tab(profile_name: str, root: Path) -> None:
     else:
         draft["min_confirmations"] = int(
             st.number_input(
-                "Confirmaciones mínimas", min_value=0, max_value=max(len(rules) - 1, 0),
-                value=min(int(draft.get("min_confirmations") or 0), max(len(rules) - 1, 0)), step=1,
+                "Confirmaciones mínimas", min_value=0, max_value=confirmable,
+                value=min(int(draft.get("min_confirmations") or 0), confirmable), step=1,
                 key=f"{prefix}:minconf",
             )
         )

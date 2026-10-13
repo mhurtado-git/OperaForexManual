@@ -19,15 +19,18 @@ LABELS = {
     "reward_risk": "Relación beneficio/riesgo (R)", "risk_per_trade": "Riesgo por operación (fracción)",
     "max_daily_loss": "Pérdida diaria máxima (fracción)", "min_reward_risk": "Beneficio/riesgo mínimo",
     "max_spread_pips": "Spread máximo (pips)", "bars": "Velas", "spread_pips": "Spread simulado (pips)",
-    "initial_balance": "Saldo inicial simulado",
+    "initial_balance": "Saldo inicial simulado", "timezone": "Zona horaria de la sesión",
+    "start": "Inicio de la sesión (HH:MM)", "end": "Fin de la sesión (HH:MM)",
+    "days": "Días activos", "no_new_minutes": "Minutos finales sin señales nuevas",
 }
+WEEKDAYS = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
 
 
 @dataclass
 class FieldSpec:
     name: str
     label: str
-    kind: str                       # int | float | choice | opt_float | opt_int | text
+    kind: str                       # int | float | choice | opt_float | opt_int | text | days
     default: object = None
     options: tuple = ()
     min: float | None = None
@@ -57,9 +60,11 @@ def _spec(name: str, info) -> FieldSpec:
     bounds = _bounds(info)
     low = bounds.get("ge", bounds.get("gt"))
     high = bounds.get("le", bounds.get("lt"))
-    default = None if info.is_required() else info.default
+    default = None if info.is_required() else info.get_default(call_default_factory=True)
     base = dict(name=name, label=LABELS.get(name, name), default=default, min=low, max=high,
                 exclusive_min="gt" in bounds)
+    if origin is list and typing.get_args(annotation) == (int,):
+        return FieldSpec(kind="days", options=tuple(WEEKDAYS), **base)
     if origin is typing.Literal:
         return FieldSpec(kind="choice", options=typing.get_args(annotation), **base)
     if annotation is int:

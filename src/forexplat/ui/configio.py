@@ -16,7 +16,8 @@ from pydantic import ValidationError
 from ..config import Profile, load_profile
 from ..risk import StopLossConfig, TakeProfitConfig
 from ..rules import (
-    AtrFilterRule, BollingerRule, FibonacciRule, MacdRule, MaCrossRule, RsiRule, StochasticRule,
+    AtrFilterRule, BollingerRule, FibonacciRule, MacdRule, MaCrossRule, RsiRule, SessionFilterRule,
+    StochasticRule,
 )
 from ..safeio import atomic_write_text
 from ..strategy import NAME_RE, StrategyConfig, load_strategies
@@ -24,6 +25,7 @@ from ..strategy import NAME_RE, StrategyConfig, load_strategies
 RULE_TYPES = {
     "ma_cross": MaCrossRule, "rsi": RsiRule, "macd": MacdRule, "bollinger": BollingerRule,
     "stochastic": StochasticRule, "fibonacci": FibonacciRule, "atr_filter": AtrFilterRule,
+    "session_filter": SessionFilterRule,
 }
 PROFILES = ("demo", "real")
 RISK_KEYS = ("risk_per_trade", "max_daily_loss", "min_reward_risk", "max_spread_pips")

@@ -32,7 +32,7 @@ class ScanResult:
 
 def scan(client, profile: Profile, strategy: Strategy, symbol: str) -> ScanResult:
     spec = SymbolSpec.from_summary(client.symbol_summary(symbol))
-    ctx = Context(spec.pip_size)
+    ctx = Context(spec.pip_size, profile.broker_time is not None)
 
     bars = max(profile.bars, strategy.warmup_bars + 5)
     candles = client.get_candles(symbol, profile.timeframe, bars)

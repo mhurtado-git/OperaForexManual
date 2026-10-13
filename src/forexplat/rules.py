@@ -17,10 +17,11 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Union
 
 import pandas as pd
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from . import indicators as ind
 from .models import StrictModel
+from .timeutil import NY, get_zone
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class Context:
     """Datos del símbolo que necesitan algunas reglas."""
 
     pip_size: float
+    # True cuando la columna `time` está en UTC real (el perfil declara `broker_time`).
+    times_are_utc: bool = False
 
 
 @dataclass
@@ -354,6 +357,80 @@ class AtrFilterRule(_Rule):
         return RuleOutput(ok, ok, {f"{tag} (pips)": atr_pips}, label, label)
 
 
+class SessionFilterRule(_Rule):
+    """Filtro de sesión horaria (compuerta): solo permite señales dentro de la ventana indicada.
+
+    La hora que cuenta es la de la ENTRADA, es decir, el cierre de la vela de la señal (la
+    operación se abre en la vela siguiente). Se evalúa en la zona horaria indicada, con su cambio
+    de horario de verano. `no_new_minutes` deja sin señales nuevos los últimos minutos de la sesión.
+    A diferencia de las demás confirmaciones, es obligatoria aunque `min_confirmations` sea menor.
+    """
+
+    type: Literal["session_filter"]
+    timezone: str = NY
+    start: str = Field(default="08:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(default="17:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4], min_length=1)
+    no_new_minutes: int = Field(default=30, ge=0, le=600)
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, value: str) -> str:
+        get_zone(value)
+        return value
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, value: list[int]) -> list[int]:
+        if any(d < 0 or d > 6 for d in value):
+            raise ValueError("days usa 0 (lunes) a 6 (domingo)")
+        return sorted(set(value))
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self._minutes(self.start) >= self._minutes(self.end):
+            raise ValueError("Se exige start anterior a end (misma jornada)")
+        if self._minutes(self.end) - self._minutes(self.start) <= self.no_new_minutes:
+            raise ValueError("no_new_minutes deja la sesión sin tiempo para señales")
+        return self
+
+    @staticmethod
+    def _minutes(text: str) -> int:
+        hours, minutes = text.split(":")
+        return int(hours) * 60 + int(minutes)
+
+    @property
+    def is_event(self) -> bool:
+        return False
+
+    @property
+    def is_gate(self) -> bool:
+        return True
+
+    @property
+    def min_bars(self) -> int:
+        return 2
+
+    def evaluate(self, df: pd.DataFrame, ctx: Context) -> RuleOutput:
+        if not ctx.times_are_utc:
+            raise ValueError(
+                "session_filter necesita saber la hora del servidor del broker: agrega `broker_time` "
+                "al perfil (ver README, «Filtro de sesión») y comprueba con `check-time`."
+            )
+        times = pd.to_datetime(df["time"], utc=True)
+        step = times.diff().median()
+        step = step if pd.notna(step) else pd.Timedelta(0)
+        entry = (times + step).dt.tz_convert(get_zone(self.timezone))
+        minute = entry.dt.hour * 60 + entry.dt.minute
+        ok = (
+            entry.dt.dayofweek.isin(self.days)
+            & (minute >= self._minutes(self.start))
+            & (minute < self._minutes(self.end) - self.no_new_minutes)
+        )
+        label = f"dentro de la sesión {self.start}-{self.end} ({self.timezone})"
+        return RuleOutput(ok, ok, {"Hora de entrada": minute.astype(float)}, label, label)
+
+
 Rule = Annotated[
     Union[
         MaCrossRule,
@@ -363,6 +440,7 @@ Rule = Annotated[
         StochasticRule,
         FibonacciRule,
         AtrFilterRule,
+        SessionFilterRule,
     ],
     Field(discriminator="type"),
 ]

@@ -25,5 +25,5 @@ def test_kinds_defaults_and_bounds_come_from_the_models():
 def test_every_rule_and_config_model_yields_known_kinds():
     for model in (*RULE_TYPES.values(), StopLossConfig, TakeProfitConfig, RiskConfig):
         for spec in fields_for(model):
-            assert spec.kind in {"int", "float", "choice", "opt_float", "opt_int"}, (model, spec.name)
+            assert spec.kind in {"int", "float", "choice", "opt_float", "opt_int", "text", "days"}, (model, spec.name)
             assert spec.label

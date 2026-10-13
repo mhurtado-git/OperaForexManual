@@ -137,7 +137,8 @@ def run_backtest_ui(
             f"Hay {len(candles)} velas y '{strategy.name}' necesita más de {strategy.warmup_bars}. "
             "Descarga más historia."
         )
-    result = run_backtest(candles, strategy, Context(pip_size), profile.risk, spread_pips, initial_balance)
+    result = run_backtest(candles, strategy, Context(pip_size, profile.broker_time is not None), profile.risk, spread_pips, initial_balance
+    )
     out = {
         "result": result,
         "equity": equity_curve(result.trades, profile.risk.risk_per_trade, initial_balance),
